@@ -1,0 +1,214 @@
+---
+title: "Appendix Table 1 Percent"
+author: "Ahyoung Cho & Rafeya Raquib"
+date: "Last updated on `r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+# Load packages
+library(dplyr)
+library(plyr)
+library(car)
+library(vroom)
+library(tidyverse)
+library(tidyr)
+library(tidyselect)
+library(data.table)
+library(purrr)
+library(knitr)
+library(DT)
+library(kableExtra)
+library(ggplot2)
+library(zoo)
+
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+#knitr::opts_knit$set(root.dir ='covid-race-metro')
+```
+
+# Table 1 Part 1
+
+```{r}
+# Import population data 
+pop_agegroup_metro<- readRDS(file = "../Data/population/pop_agegroup_metro.rds") %>%
+  dplyr::filter(AgeGroup!="0-24" & YearMo=="07/01/2020")%>%
+  dplyr::select(-YearMo) %>%
+  mutate(Year = "2020")
+pop_21_agegroup_metro<- readRDS(file = "../Data/population/pop_agegroup_metro.rds") %>%
+  dplyr::filter(AgeGroup!="0-24" & YearMo=="07/01/2021")%>%
+  dplyr::select(-YearMo) %>%
+  mutate(Year = "2021")
+pop_metro <- rbind(pop_agegroup_metro, pop_21_agegroup_metro)
+
+
+##Race categories of interest
+pop_metro1 <- pop_metro %>%
+  filter(Race == "Hispanic" | Race == "NH Black" | Race == "NH White"| Race == "All") %>%
+  dplyr::group_by(Race, Metro, Year) %>%
+  dplyr::summarise(Population = sum(Population)) %>%
+  pivot_wider(names_from = Year, values_from = Population) %>%
+  mutate(Race = dplyr::recode(Race, "NH Black" = "Non-Hispanic Black", "NH White" = "Non-Hispanic White"))
+
+pop_metro2 <- pop_metro1 %>%
+  dplyr::group_by(Race) %>%
+  dplyr::mutate(tot_2020=sum(`2020`),
+                tot_2021=sum(`2021`))%>%
+  dplyr::ungroup()%>%
+  dplyr::group_by(Race,Metro) %>%
+  dplyr::summarise(Prop2020 = `2020` / tot_2020 * 100,
+                   Prop2021 = `2021` / tot_2021 * 100)%>%
+  dplyr::ungroup()
+```
+
+# Table 1 Part 1
+
+```{r, warning=FALSE, message = FALSE}
+clean_data <- function(data) {
+  data %>%
+    filter(Notes != "Total") %>%
+    mutate(AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                                grepl("_55_74", FileName) ~ "55-74",
+                                grepl("_75plus", FileName) ~ "75plus"),
+           Race = case_when(grepl("hisp", FileName) ~ "Hispanic",
+                                grepl("nhwhite", FileName) ~ "Non-Hispanic White",
+                                grepl("nhblack", FileName) ~ "Non-Hispanic Black"),
+           Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                            grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                            grepl("_nonmetro", FileName) ~ "Nonmetro"),
+           Wave = case_when(Month.Code %in% c("2020/03", "2020/04", 
+                                              "2020/05") ~ "Initial", 
+                            Month.Code %in% c( "2020/06","2020/07", 
+                                               "2020/08") ~ "Second",
+                            Month.Code %in% c("2020/09", "2020/10", "2020/11", 
+                                              "2020/12", "2021/01", 
+                                              "2021/02", "2021/03", 
+                                              "2021/04", "2021/05") ~ "Alpha",
+                            Month.Code %in% c("2021/06", "2021/07","2021/08", 
+                                              "2021/09", "2021/10") ~ "Delta",
+                            Month.Code %in% c("2021/11", "2021/12", "2022/01", "2022/02") ~ "Omicron",
+                            TRUE ~ Month.Code)) %>%
+    dplyr::select(FileName, Metro, Month.Code, Wave, Race, AgeGroup, Deaths) %>%
+    mutate(Wave = na_if(Wave, "")) %>%
+    na.omit() %>%
+    mutate_all(funs(replace(., .=='Suppressed', NA))) %>%
+    dplyr::mutate(Deaths = as.integer(Deaths))
+}
+
+list_of_files <- list.files(path = "../Data/month_race_metro/", recursive = TRUE,
+                            pattern = ".txt", 
+                            full.names = TRUE)
+
+df_death <- list_of_files %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName",  colClasses=c("character")) %>%
+  clean_data()
+```
+
+```{r}
+# Rows with NAs 
+nrow(df_death) # 648
+summary(df_death$Deaths)
+# 3 are NAs
+NAs <- subset(df_death, is.na(df_death$Deaths)) 
+```
+
+```{r}
+# Replace NAs with beta distribution 
+set.seed(12345)
+df_death$Deaths[is.na(df_death$Deaths)] <- sample(floor((rbeta(nrow(df_death), 2, 3)*10)), sum(is.na(df_death$Deaths)), replace = TRUE) 
+```
+
+```{r, warning=FALSE, message = FALSE}
+clean_total_data <- function(data) {
+  data %>%
+    filter(Notes != "Total") %>%
+    mutate(AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                                grepl("_55_74", FileName) ~ "55-74",
+                                grepl("_75plus", FileName) ~ "75plus"),
+           Race = case_when(grepl("total", FileName) ~ "All"),
+           Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                            grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                            grepl("_nonmetro", FileName) ~ "Nonmetro"),
+           Wave = case_when(Month.Code %in% c("2020/03", "2020/04", 
+                                              "2020/05") ~ "Initial", 
+                            Month.Code %in% c( "2020/06","2020/07", 
+                                               "2020/08") ~ "Second",
+                            Month.Code %in% c("2020/09", "2020/10", "2020/11", 
+                                              "2020/12", "2021/01", 
+                                              "2021/02", "2021/03", 
+                                              "2021/04", "2021/05") ~ "Alpha",
+                            Month.Code %in% c("2021/06", "2021/07","2021/08", 
+                                              "2021/09", "2021/10") ~ "Delta",
+                            Month.Code %in% c("2021/11", "2021/12", "2022/01", "2022/02") ~ "Omicron",
+                            TRUE ~ Month.Code)) %>%
+    dplyr::select(FileName, Metro, Month.Code, Wave, Race, AgeGroup, Deaths) %>%
+    mutate(Wave = na_if(Wave, "")) %>%
+    na.omit() %>%
+    mutate_all(funs(replace(., .=='Suppressed', NA))) %>%
+    dplyr::mutate(Deaths = as.integer(Deaths))
+}
+
+list_of_files <- list.files(path = "../Data/month_metro/", recursive = TRUE,
+                            pattern = ".txt", 
+                            full.names = TRUE)
+
+df_death_total <- list_of_files %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName",  colClasses=c("character")) %>%
+  clean_total_data()
+```
+
+```{r}
+df_death <- rbind(df_death, df_death_total)
+```
+
+```{r}
+df_death_prop1 <- df_death %>%
+  dplyr::group_by(Race, Metro, Wave) %>%
+  dplyr::summarise(Deaths = sum(Deaths)) %>%
+  pivot_wider(names_from = Wave, values_from = Deaths) 
+
+df_death_prop2 <- df_death_prop1 %>%
+  dplyr::group_by(Race) %>%
+  dplyr::mutate(tot_initial=sum(Initial),
+                tot_second=sum(Second),
+                tot_alpha=sum(Alpha),
+                tot_delta=sum(Delta),
+                tot_omicron=sum(Omicron))%>%
+  dplyr::ungroup()%>%
+  dplyr::group_by(Race,Metro) %>%
+  dplyr::summarise(PropInitial = Initial / tot_initial * 100,
+                   PropSecond = Second / tot_second * 100,
+                   PropAlpha = Alpha / tot_alpha * 100,
+                   PropDelta = Delta / tot_delta * 100,
+                   PropOmicron = Omicron / tot_omicron * 100)%>%
+  dplyr::ungroup()
+```
+
+
+```{r}
+Table1 <- merge(pop_metro2, df_death_prop2, by=c("Race","Metro")) 
+write.csv(Table1,"../Output/appendix_table1.csv")
+```
+
+```{r}
+Table1_formatted <- Table1 %>%
+  mutate(Prop2020 = round(Prop2020, 2),
+         Prop2021 = round(Prop2021, 2),
+         PropInitial = round(PropInitial, 2), 
+         PropSecond = round(PropSecond, 2),
+         PropAlpha = round(PropAlpha, 2),
+         PropDelta = round(PropDelta, 2),
+         PropOmicron = round(PropOmicron, 2)) %>%
+  mutate(Prop2020 = paste(Prop2020, "%"),
+         Prop2021 = paste(Prop2021, "%"),
+         PropInitial = paste(PropInitial, "%"), 
+         PropSecond = paste(PropSecond, "%"),
+         PropAlpha = paste(PropAlpha, "%"),
+         PropDelta = paste(PropDelta, "%"),
+         PropOmicron = paste(PropOmicron, "%")) %>%
+  kbl(col.names = c("Race/Ethnic Groups", "Metro-Nonmetro Categories", "2020", "2021",
+                    "Initial Wave: Part One", "Initial Wave: Part Two", "Alpha", "Delta", "Omicron")) %>%
+  kable_classic_2(full_width = F) %>%
+  save_kable("../Output/appendix_table1.html")
+```

@@ -1,0 +1,325 @@
+---
+title: "Appendix Table 4 Second Wave"
+author: "Ahyoung Cho & Rafeya Raquib"
+date: "Last updated on `r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE, message=FALSE}
+# Load packages
+library(dplyr)
+library(plyr)
+library(car)
+library(vroom)
+library(tidyverse)
+library(tidyr)
+library(tidyselect)
+library(data.table)
+library(purrr)
+library(knitr)
+library(DT)
+library(kableExtra)
+library(ggplot2)
+library(MASS) # for Wilcoxon Signed Rank Test
+
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+#knitr::opts_knit$set(root.dir ='../covid-race-metro/')
+```
+
+### Generate ASDR metro 
+
+```{r}
+# clean non-hispanic
+# exclude NHOPI 
+clean_nh <- function(data) {
+  data %>%
+    filter(Single.Race.6 == "American Indian or Alaska Native" | Single.Race.6 == "Asian" | Single.Race.6 == "Black or African American" | Single.Race.6 == "White") %>%
+    dplyr::rename(Race = Single.Race.6) %>%
+    mutate(Wave = case_when(grepl("initial", FileName) ~ "Initial",
+                            grepl("second", FileName) ~ "Second"),
+           Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                             grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                             grepl("_nonmetro", FileName) ~ "Nonmetro"),
+         AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                              grepl("_55_74", FileName) ~ "55-74",
+                              grepl("_75plus", FileName) ~ "75plus",
+                              grepl("all", FileName) ~ "All"),
+         Race = dplyr::recode(Race, `American Indian or Alaska Native` = "NH AIAN",
+                              `Asian` = "NH Asian",
+                              `Black or African American` = "NH Black",
+                              `White` = "NH White")) %>%
+  dplyr::select(FileName, Wave, Race, AgeGroup, Deaths, Metro) %>%
+    mutate(Wave = na_if(Wave, "")) %>%
+    na.omit() %>%
+    mutate_all(funs(replace(., .=='Suppressed', NA))) %>%
+    dplyr::mutate(Deaths = as.integer(Deaths))
+}
+
+list_of_files <- list.files(path = "../Data/initial_second/nonhispanic/", recursive = TRUE,
+                            pattern = ".txt", 
+                            full.names = TRUE)
+
+df_death_nh <- list_of_files %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName",  colClasses=c("character")) %>%
+  clean_nh()
+
+# clean hispanic
+clean_hispanic <- function(data) {
+  data %>%
+    mutate(Wave = case_when(grepl("initial", FileName) ~ "Initial",
+                            grepl("second", FileName) ~ "Second"),
+           Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                             grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                             grepl("_nonmetro", FileName) ~ "Nonmetro"),
+         AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                              grepl("_55_74", FileName) ~ "55-74",
+                              grepl("_75plus", FileName) ~ "75plus",
+                              grepl("all", FileName) ~ "All"),
+         Race = "Hispanic") %>%
+  dplyr::select(FileName, Wave, Race, AgeGroup, Deaths, Metro) %>%
+    mutate(Wave = na_if(Wave, "")) %>%
+    na.omit() %>%
+    mutate_all(funs(replace(., .=='Suppressed', NA))) %>%
+    dplyr::mutate(Deaths = as.integer(Deaths))
+}
+
+list_of_files <- list.files(path = "../Data/initial_second/hispanic/", recursive = TRUE,
+                            pattern = ".txt", 
+                            full.names = TRUE)
+
+df_death_hispanic <- list_of_files %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName",  colClasses=c("character")) %>%
+  clean_hispanic() %>%
+  drop_na()
+
+# Metro dataset
+df_death <- bind_rows(df_death_nh, df_death_hispanic)
+```
+
+```{r}
+# Rows with NAs 
+nrow(df_death)
+NAs <- subset(df_death, is.na(df_death$Deaths)) 
+df_death$Imputed <- ifelse(is.na(df_death$Deaths), "Imputed", "Not")
+
+# Replace NAs with beta distribution 
+set.seed(12345)
+df_death$Deaths[is.na(df_death$Deaths)] <- sample(floor((rbeta(nrow(df_death), 2, 3)*10)), sum(is.na(df_death$Deaths)), replace = TRUE) 
+
+df_death_imputed <- df_death %>% filter(Imputed == "Imputed")
+```
+
+```{r}
+# Import population data 
+
+# 3 months in the initial wave 
+age_distribution <- readRDS(file = "../Data/population/age_distribution.rds") 
+
+pop_agegroup_metro <- readRDS(file = "../Data/population/population_monthly_metro_race_age.RDS")%>%
+  filter(AgeGroup != "0-24") %>%
+  dplyr::mutate(Wave = case_when(Month %in% c(3,4,5) & Year==2020 ~ "Initial",
+                            Month %in% c(6,7,8) & Year==2020 ~ "Second",
+                            Month %in% c(9,10,11,12) & Year==2020 ~ "Alpha",
+                            Month %in% c(1,2,3,4,5) & Year==2021 ~ "Alpha",
+                            Month %in% c(6,7,8,9,10) & Year==2021 ~ "Delta",
+                            Month %in% c(11,12) & Year==2021 ~ "Omicron",
+                            Month %in% c(1,2) & Year==2022 ~ "Omicron")) %>%
+  dplyr::group_by(Wave,Race,AgeGroup,Metro) %>%
+  dplyr::summarise(Population=sum(Population))%>%
+  ungroup()
+
+```
+
+Merge and calculate CDR, and age-standardized death rate 
+
+Reference: https://sphweb.bumc.bu.edu/otlt/MPH-Modules/EP/EP713_StandardizedRates/EP713_StandardizedRates5.html
+
+```{r, warning=FALSE, message = FALSE}
+initial_mortality_pop <- inner_join(df_death, pop_agegroup_metro, by = c("Metro", "Race", "AgeGroup","Wave")) %>% filter(Wave == "Initial")
+
+second_mortality_pop <- inner_join(df_death, pop_agegroup_metro, by = c("Metro", "Race", "AgeGroup","Wave")) %>% filter(Wave == "Second")
+
+# Crude Death Rate 
+initial_cdr <-  initial_mortality_pop %>% 
+  dplyr::group_by(Metro, Race) %>%
+  dplyr::summarize(Deaths=sum(Deaths), Population_sum=sum(Population)) %>%
+  dplyr::mutate(initial_CDR = Deaths / Population_sum * 12 * 100000) %>% 
+  dplyr::select(Metro, Race, initial_CDR) 
+
+second_cdr <-  second_mortality_pop %>% 
+  dplyr::group_by(Metro, Race) %>%
+  dplyr::summarize(Deaths=sum(Deaths),Population_sum=sum(Population)) %>%
+  dplyr::mutate(second_CDR = Deaths / Population_sum * 12 * 100000) %>% 
+  dplyr::select(Metro, Race, second_CDR) 
+
+## Race/Age Specific Death Rates
+initial_ar_deaths <-  initial_mortality_pop %>% 
+  dplyr::group_by(Metro, Race) %>%
+  dplyr::mutate(DR = Deaths / Population * 100000 * 12) 
+
+second_ar_deaths <-  second_mortality_pop %>% 
+  dplyr::group_by(Metro, Race) %>%
+  dplyr::mutate(DR = Deaths / Population * 100000 * 12) 
+
+# Calculate age standardized death rate 
+initial_finaldata <- inner_join(initial_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
+  dplyr::mutate(Product = DR * Distribution,
+                ProductVar=(Distribution**2)*(DR**2)*(1/Deaths))%>% # multiply CDR with age distribution 
+  dplyr::group_by(Race, Metro) %>%
+  dplyr::summarise(initial_ASDR = sum(Product),
+                   initial_ASDR_var=sum(ProductVar)) 
+
+# Calculate age standardized death rate 
+second_finaldata <- inner_join(second_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
+  dplyr::mutate(Product = DR * Distribution,
+                ProductVar=(Distribution**2)*(DR**2)*(1/Deaths))%>% # multiply CDR with age distribution 
+  dplyr::group_by(Race, Metro) %>%
+  dplyr::summarise(second_ASDR = sum(Product),
+                   second_ASDR_var=sum(ProductVar)) 
+
+df_list <- list(initial_cdr, initial_finaldata, second_cdr, second_finaldata)
+
+finaldata_metro <- df_list %>% reduce(inner_join, by = c("Race", "Metro"))
+
+saveRDS(finaldata_metro, file = "../Data/finaldata/finaldata_metro_initial_second.rds")
+```
+
+```{r total}
+df_death_total <- df_death %>%
+  dplyr::group_by(Wave, Race, AgeGroup) %>%
+  dplyr::summarise(Deaths = sum(Deaths))
+
+pop_agegroup_metro_total <- pop_agegroup_metro %>%
+  dplyr::group_by(Race, Wave, AgeGroup) %>%
+  dplyr::summarise(Population = sum(Population)) 
+
+```
+
+```{r, warning=FALSE, message = FALSE}
+initial_mortality_pop <- inner_join(df_death_total, pop_agegroup_metro_total, by = c("Race", "AgeGroup", "Wave")) %>% filter(Wave == "Initial")
+second_mortality_pop <- inner_join(df_death_total, pop_agegroup_metro_total, by = c("Race", "AgeGroup","Wave")) %>% filter(Wave == "Second")
+
+# Crude Death Rate 
+initial_cdr <-  initial_mortality_pop %>% 
+  dplyr::group_by(Race) %>%
+  dplyr::summarize(Deaths=sum(Deaths), Population_sum=sum(Population)) %>%
+  dplyr::mutate(initial_CDR = Deaths / Population_sum * 100000*12) %>% 
+  dplyr::select(Race, initial_CDR) 
+
+second_cdr <-  second_mortality_pop %>% 
+  dplyr::group_by(Race) %>%
+  dplyr::summarize(Deaths=sum(Deaths),Population_sum=sum(Population)) %>%
+  dplyr::mutate(second_CDR = Deaths / Population_sum * 100000*12) %>% 
+  dplyr::select(Race, second_CDR) 
+
+## Race/Age Specific Death Rates
+initial_ar_deaths <-  initial_mortality_pop %>% 
+  dplyr::group_by(Race) %>%
+  dplyr::mutate(DR = Deaths / Population * 100000*12) 
+
+second_ar_deaths <-  second_mortality_pop %>% 
+  dplyr::group_by(Race) %>%
+  dplyr::mutate(DR = Deaths / Population * 100000*12) 
+
+# Calculate age standardized death rate 
+initial_finaldata <- inner_join(initial_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
+  dplyr::mutate(Product = DR * Distribution,
+                ProductVar=(Distribution**2)*(DR**2)*(1/Deaths)) %>% # multiply CDR with age distribution 
+  dplyr::group_by(Race) %>%
+  dplyr::summarise(initial_ASDR = sum(Product),
+                   initial_ASDR_var=sum(ProductVar)) 
+
+# Calculate age standardized death rate 
+second_finaldata <- inner_join(second_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
+  dplyr::mutate(Product = DR * Distribution,
+                ProductVar=(Distribution**2)*(DR**2)*(1/Deaths)) %>% # multiply CDR with age distribution 
+  dplyr::group_by(Race) %>%
+  dplyr::summarise(second_ASDR = sum(Product),
+                   second_ASDR_var=sum(ProductVar)) 
+
+df_list <- list(initial_cdr, initial_finaldata, second_cdr, second_finaldata)
+
+finaldata_metro_total <- df_list %>% reduce(inner_join, by = c("Race"))
+finaldata_metro_total <- finaldata_metro_total %>% mutate(Metro = "Total")
+
+saveRDS(finaldata_metro_total, file = "../Data/finaldata/finaldata_metro_total_initial_second.rds")
+```
+
+### Create Table 3
+
+```{r fig.asp = 0.8, fig.width = 10, include = FALSE, warning=FALSE, message = FALSE}
+finaldata_metro <- readRDS(file = "../Data/finaldata/finaldata_metro_initial_second.rds")
+finaldata_metro_total <- readRDS(file = "../Data/finaldata/finaldata_metro_total_initial_second.rds")
+finaldata_metro <- bind_rows(finaldata_metro, finaldata_metro_total)
+
+initial_rr_base <- finaldata_metro %>% filter(Race == "NH White") %>%
+  dplyr::select(Metro, initial_ASDR, initial_ASDR_var) %>% dplyr::rename(initial_base = initial_ASDR,
+                                                               initial_base_var=initial_ASDR_var) 
+second_rr_base <- finaldata_metro %>% filter(Race == "NH White") %>%
+  dplyr::select(Metro, second_ASDR, second_ASDR_var) %>% dplyr::rename(second_base = second_ASDR,
+                                                               second_base_var=second_ASDR_var)
+
+rr_base <- inner_join(initial_rr_base, second_rr_base)
+finaldata_metro <- merge(finaldata_metro, rr_base, by = c("Metro"))
+
+Table4 <- finaldata_metro %>% 
+  mutate(Race = dplyr::recode(Race, 
+                              "NH AIAN" = "Non-Hispanic AI/AN",
+                              "NH Asian" = "Non-Hispanic Asian",
+                              "NH Black" = "Non-Hispanic Black",
+                              "NH White" = "Non-Hipanic White"),
+         pct_change_dr = (second_ASDR - initial_ASDR) / initial_ASDR*100,
+         pct_change_dr_upper=((second_ASDR-initial_ASDR)+1.96*sqrt(initial_ASDR_var+second_ASDR_var))/initial_ASDR*100,
+         pct_change_dr_lower=((second_ASDR-initial_ASDR)-1.96*sqrt(initial_ASDR_var+second_ASDR_var))/initial_ASDR*100,
+         initial_rr = initial_ASDR / initial_base,
+         initial_rr_var=(initial_rr**2)*(initial_ASDR_var/initial_ASDR**2+initial_base_var/initial_base**2),
+         initial_rr_upper= initial_rr+1.96*sqrt(initial_rr_var),
+         initial_rr_lower= initial_rr-1.96*sqrt(initial_rr_var),
+         second_rr = second_ASDR / second_base,
+         second_rr_var=(second_rr**2)*(second_ASDR_var/second_ASDR**2+second_base_var/second_base**2),
+         second_rr_upper= second_rr+1.96*sqrt(second_rr_var),
+         second_rr_lower= second_rr-1.96*sqrt(second_rr_var),
+         abs_change = second_ASDR - initial_ASDR, 
+         rel_change = second_ASDR / initial_ASDR,
+         pct_change_rr = (second_rr - initial_rr) / initial_rr*100,
+         pct_change_rr_var= (second_rr/initial_rr)**2*(second_rr_var/second_rr**2+initial_rr_var/initial_rr**2),
+         pct_change_rr_upper= pct_change_rr+1.96*sqrt(pct_change_rr_var)*100,
+         pct_change_rr_lower= pct_change_rr-1.96*sqrt(pct_change_rr_var)*100
+         ) %>%
+  dplyr::select(Metro, Race, initial_ASDR, second_ASDR, pct_change_dr,pct_change_dr_lower,pct_change_dr_upper,
+                initial_rr, initial_rr_lower,initial_rr_upper,
+                second_rr, second_rr_lower,second_rr_upper,
+                pct_change_rr,pct_change_rr_lower,pct_change_rr_upper)
+write.csv(Table4,"../Output/appendix_table4_second.csv")
+```
+
+```{r fig.asp = 0.8, fig.width = 10, warning=FALSE, message = FALSE}
+Table4_formatted <- Table4 %>%
+  mutate(initial_ASDR = round(initial_ASDR, 0),
+         second_ASDR = round(second_ASDR, 0),
+         pct_change_dr = round(pct_change_dr, 0),
+         pct_change_dr_lower = round(pct_change_dr_lower, 0),
+         pct_change_dr_upper = round(pct_change_dr_upper, 0),
+         initial_rr = round(initial_rr, 2),
+         initial_rr_lower = round(initial_rr_lower, 2),
+         initial_rr_upper = round(initial_rr_upper, 2),
+         second_rr = round(second_rr, 2),
+         second_rr_lower = round(second_rr_lower, 2),
+         second_rr_upper = round(second_rr_upper, 2),
+         pct_change_rr = round(pct_change_rr, 0),
+         pct_change_rr_lower = round(pct_change_rr_lower, 0),
+         pct_change_rr_upper = round(pct_change_rr_upper, 0)) %>%
+  mutate(pct_change_dr_chr = paste(pct_change_dr, "(", pct_change_dr_lower, "to", pct_change_dr_upper, ")"),
+         initial_rr_chr = paste(initial_rr, "(", initial_rr_lower, "to", initial_rr_upper, ")"),
+         second_rr_chr = paste(second_rr, "(", second_rr_lower, "to", second_rr_upper, ")"),
+         pct_change_rr_chr = paste(pct_change_rr, "(", pct_change_rr_lower, "to", pct_change_rr_upper, ")")) %>%
+  dplyr::select(Metro, Race, initial_ASDR, second_ASDR, pct_change_dr_chr, initial_rr_chr, second_rr_chr, pct_change_rr_chr) %>%
+  kbl(col.names = c("Metro", "Race", "ASDR (Initial)", "ASDR (Second)", "% Change Death Rates","Rate Ratio (Initial)", "Rate Ratio (Second)", "% Change Rate Ratio")) %>%
+  kable_classic_2(full_width = F) %>%
+  save_kable("../Output/appendix_table4_second.html")
+
+```
+

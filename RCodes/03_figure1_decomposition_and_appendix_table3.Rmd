@@ -1,0 +1,356 @@
+---
+title: "Figure 1 Decomposition"
+author: "Ahyoung Cho & Rafeya Raquib"
+date: "Last updated on `r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+# Load packages
+library(dplyr)
+library(car)
+library(vroom)
+library(tidyverse)
+library(data.table)
+library(purrr)
+
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+#knitr::opts_knit$set(root.dir ='../covid-race-metro/')
+```
+
+### Data Cleaning
+Initial : 3 months  
+Second: 3 months  
+Alpha: 4 months in 2020 and 5 months in 2021  
+Delta: 5 months   
+Omicron: 4 months   
+
+```{r, warning=FALSE, message = FALSE}
+clean_data <- function(data) {
+  data %>%
+    filter(Notes != "Total") %>%
+    mutate(AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                                grepl("_55_74", FileName) ~ "55-74",
+                                grepl("_75plus", FileName) ~ "75plus"),
+           Race = case_when(Single.Race.6=="White" ~ "NH White",
+                            Single.Race.6=="Native Hawaiian or Other Pacific Islander" ~ "NH NHOPI",
+                            Single.Race.6=="More than one race" ~ "NH More",
+                            Single.Race.6=="Black or African American" ~ "NH Black",
+                            Single.Race.6=="Asian" ~ "NH Asian",
+                            Single.Race.6=="American Indian or Alaska Native" ~ "NH AIAN",
+                            grepl("hisp", FileName) ~ "Hispanic"),
+           Metro = case_when(grepl("_large", FileName) ~ "Large Metro",
+                            grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                            grepl("_nonmetro", FileName) ~ "Nonmetro"),
+           Wave = case_when(grepl("_initial", FileName) ~ "Initial",
+                            grepl("_second", FileName) ~ "Second",
+                            grepl("_alpha", FileName) ~ "Alpha",
+                            grepl("_delta", FileName) ~ "Delta",
+                            grepl("_omicron", FileName) ~ "Omicron")) %>%
+    dplyr::select(FileName, Metro, Wave, Race, AgeGroup, Deaths) %>%
+    dplyr::filter(Race%in%c("NH White","NH Black","NH Asian","NH AIAN","Hispanic"))%>%
+    na_if("") %>%
+    na.omit() %>%
+    mutate_all(funs(replace(., .=='Suppressed', NA))) %>% dplyr::mutate(Deaths = as.integer(Deaths))
+}
+
+list_of_files <- list.files(path = "../Data/waves_race_metro", recursive = TRUE,
+                            pattern = ".txt", 
+                            full.names = TRUE)
+
+df_death <- list_of_files %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName",  colClasses=c("character")) %>%
+  clean_data()
+
+saveRDS(df_death,"../Data/finaldata/waves_race_metro_deaths.rds")
+```
+
+```{r}
+summary(df_death$Deaths)
+```
+
+```{r}
+# Rows with NAs 
+# 3 are NAs
+nrow(df_death)
+NAs <- subset(df_death, is.na(df_death$Deaths)) 
+df_death$Imputed <- ifelse(is.na(df_death$Deaths), "Imputed", "Not")
+```
+
+```{r}
+# Replace NAs with beta distribution 
+set.seed(12345)
+df_death$Deaths[is.na(df_death$Deaths)] <- sample(floor((rbeta(nrow(df_death), 2, 3)*10)), sum(is.na(df_death$Deaths)), replace = TRUE) 
+
+df_death_imputed <- df_death %>% filter(Imputed == "Imputed")
+summary(df_death_imputed$Deaths)
+summary(df_death$Deaths)
+```
+
+```{r}
+df_death_allmetro <- df_death %>%dplyr::group_by(Wave,Race,AgeGroup) %>% summarise(Deaths=sum(Deaths)) %>% ungroup() %>% 
+  dplyr::mutate(Metro="All")
+
+df_death_4cat <-bind_rows(df_death,df_death_allmetro)
+```
+
+
+```{r}
+# Import population data 
+age_distribution <- readRDS(file = "../Data/population/age_distribution.rds")
+
+pop_agegroup_metro <- readRDS(file = "../Data/population/population_monthly_metro_race_age.RDS")%>%
+  filter(AgeGroup != "0-24") %>%
+  dplyr::mutate(Wave = case_when(Month %in% c(3,4,5) & Year==2020 ~ "Initial",
+                            Month %in% c(6,7,8) & Year==2020 ~ "Second",
+                            Month %in% c(9,10,11,12) & Year==2020 ~ "Alpha",
+                            Month %in% c(1,2,3,4,5) & Year==2021 ~ "Alpha",
+                            Month %in% c(6,7,8,9,10) & Year==2021 ~ "Delta",
+                            Month %in% c(11,12) & Year==2021 ~ "Omicron",
+                            Month %in% c(1,2) & Year==2022 ~ "Omicron")) %>%
+  dplyr::group_by(Wave,Race,AgeGroup,Metro) %>%
+  dplyr::summarise(Population=sum(Population))%>%
+  ungroup()
+
+```
+
+```{r, warning=FALSE, message = FALSE}
+mortality_pop <- inner_join(df_death_4cat, pop_agegroup_metro, by = c("Metro", "Race", "AgeGroup","Wave")) 
+```
+
+```{r}
+# Race/Age Specific Death Rates
+ar_deaths <-mortality_pop %>%
+  dplyr::group_by(Metro, Wave, Race) %>%
+  dplyr::mutate(DR = Deaths / Population * 100000*12)
+
+age_distribution <- age_distribution %>% dplyr::select(-Population)
+
+# Calculate total age standardized death rate per wave
+finaldata <- inner_join(ar_deaths, age_distribution, by=c("AgeGroup"), all.x=TRUE) %>% 
+  dplyr::mutate(Product = DR * Distribution,
+                ProductVar=(Distribution**2)*(DR**2)*(1/Deaths)) %>% # multiply CDR with age distribution 
+  dplyr::group_by(Race, Wave, Metro) %>%
+  dplyr::summarise(ASDR = sum(Product),
+                   ASDR_var=sum(ProductVar)) 
+
+#saveRDS(finaldata,here("FinalData","waves_ASDR.rds"))
+```
+
+
+```{r}
+# divide by months and multiply by 12 from asdr 
+
+pop_metro <- pop_agegroup_metro %>% 
+  dplyr::group_by(Metro,Race,Wave)%>% 
+  dplyr::summarise(Population=sum(Population)*12)%>%ungroup()
+
+finaldata_waves <- merge(finaldata,pop_metro,by=c("Metro","Race","Wave"))
+
+saveRDS(finaldata_waves, file = "../Data/finaldata/for_decomp_waves.rds")
+```
+
+
+### Decomposition
+
+
+```{r}
+for_decomp <- readRDS("../Data/finaldata/for_decomp_waves.rds")
+
+for_decomp <- for_decomp %>% 
+  dplyr::group_by(Wave,Race) %>%
+  dplyr::mutate(popProp=Population/sum(Population)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::filter(Race %in% c("NH White","NH Black","Hispanic"))
+
+```
+
+
+```{r}
+
+# We create average mortality rates by race weighted by population size
+for_decomp_geoRates <- for_decomp %>%
+  dplyr::group_by(Race,Wave) %>%
+  dplyr::summarise(totRate=sum(ASDR*popProp)) %>%
+  dplyr::ungroup()
+
+# We create a standard geographic distribution by taking the average one
+# in the data, but it could be coming from another source
+for_decomp_stdGeoDist <- for_decomp %>%
+  dplyr::group_by(Metro) %>%
+  dplyr::summarise(Population=sum(Population)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(stdPopProp=Population/sum(Population)) %>%
+  dplyr::select(-Population)
+
+# We append the standard geographic distribution to the mortality rates data
+for_decomp_merge <- for_decomp %>% 
+  dplyr::select(-Population) %>%
+  left_join(for_decomp_geoRates,by=c('Race','Wave')) 
+
+for_decomp_waves <- for_decomp_merge %>% dplyr::filter(Wave!="Initial")
+for_decomp_base <-for_decomp_merge %>% 
+  dplyr::filter(Wave=="Initial") %>% 
+  dplyr::select(-Wave) %>%
+  dplyr::rename(ASDR_w1=ASDR,
+         popProp_w1=popProp,
+         totRate_w1=totRate)
+
+
+# Reshape data from long to wide for ease of calculation
+for_decomp_wide <- merge(for_decomp_waves,for_decomp_base,by=c("Metro","Race"))
+
+for_decomp_final <-  for_decomp_wide %>% left_join(for_decomp_stdGeoDist,by='Metro')
+
+```
+
+
+#### For each race/metro category calculate the following:
+2021 Rate - 2020 Rate * Standardized Population Proportion  
+2021 Rate - 2020 Rate * Difference between 2020 Population Proportion and Standardized Population Proportion  
+Difference between 2021 Population Proportion and 2020 Population Proportion * 2021 Rate  
+  
+Sum across metro groups to get race components  
+
+```{r}
+decomp_comp <- for_decomp_final %>% 
+  mutate(comp1=(ASDR-ASDR_w1)*stdPopProp,
+         comp2=(ASDR-ASDR_w1)*(popProp_w1-stdPopProp),
+         comp3=(popProp-popProp_w1)*ASDR) %>% 
+   dplyr::group_by(Race,Wave,totRate,totRate_w1)%>%
+   dplyr::summarise(comp1=sum(comp1),
+             comp2=sum(comp2),
+             comp3=sum(comp3)) %>%
+  dplyr::ungroup()
+
+##Reshaping data for ease of calculation 
+##Separate NH White and put in separate columns
+ decomp_comp_nonwhite <- decomp_comp %>% filter(Race !="NH White")
+ decomp_comp_white <- decomp_comp %>% 
+   dplyr::filter(Race =="NH White") %>%
+   dplyr::rename(totRate_w1_whi=totRate_w1,
+          totRate_whi=totRate,
+          comp1_whi=comp1,
+          comp2_whi=comp2,
+          comp3_whi=comp3) %>%
+   dplyr::select(-Race) 
+
+
+decomp_comp_wide <- merge(decomp_comp_nonwhite,decomp_comp_white, by="Wave") 
+
+```
+
+#### Calculate the total disparity difference and each component
+#### COMPONENTS:
+1. nonwhite_mort: contribution of the Black mortality change  under the standard geographical distribution  
+2. white_mort: contribution of the White mortality change under the standard geographical distribution  
+3. geo_shift: contribution of the difference in the geographical distribution of each race/ethnicity (relative to the common standard distribution), weighted by geography-specific mortality changes  
+4. prop_shift: negligible, contribution of changes in disparity due to the proportion distribution of each race/metro changing between time periods  
+  
+Add up the components to check if add up to total disparity difference  
+Calculate percent of total disparity difference each component makes up  
+
+```{r}
+
+decomp_final <- decomp_comp_wide %>% 
+  dplyr::mutate(totalDiff=(totRate-totRate_whi)-(totRate_w1-totRate_w1_whi),
+         nonwhite_mort=round(comp1,2),
+         white_mort=round(-comp1_whi,2),
+         geo_shift=round((comp2-comp2_whi),2),
+         prop_shift=round((comp3-comp3_whi),2),
+         checkDiff=comp1-comp1_whi + (comp2 - comp2_whi) + (comp3 - comp3_whi),
+         per_nonwhite_mort=nonwhite_mort/totalDiff,
+         per_white_mort=white_mort/totalDiff,
+         per_geo_shift=geo_shift/totalDiff,
+         per_prop_shift=prop_shift/totalDiff) %>%
+  dplyr::select(Race,Wave,totalDiff,nonwhite_mort,white_mort,geo_shift,prop_shift, checkDiff,
+         per_nonwhite_mort,per_white_mort,per_geo_shift,per_prop_shift,)
+
+decomp_final%>%
+  rmarkdown::paged_table()
+```
+
+
+```{r}
+#Save data
+saveRDS(decomp_final,"../Data/finaldata/wave_decomp_final.RDS")
+
+#Save as CSV
+write.csv(decomp_final,"../Output/wave_decomp.csv",row.names = FALSE)
+```
+
+## FIGURE 1: Absolute stacked bar of decomposition components for omicron and delta waves compared to initial wave
+
+```{r}
+wave_decomp_final<-readRDS("../Data/finaldata/wave_decomp_final.RDS")
+
+
+per_decomp_long <- wave_decomp_final %>% dplyr::select(Wave,Race,per_nonwhite_mort,per_white_mort,per_geo_shift)%>%
+  pivot_longer(cols=c(per_nonwhite_mort,per_white_mort,per_geo_shift),names_to = "component", values_to = "change_per") 
+
+per_decomp_long <- per_decomp_long %>%
+  mutate(component=substring(component,5),
+         change_per=round(change_per,3)*100,
+         change_per_str=paste0(change_per,"%"))
+
+abs_decomp_long <- wave_decomp_final %>% 
+  dplyr::select(Wave,Race,nonwhite_mort,white_mort,geo_shift) %>%
+  pivot_longer(cols=c(nonwhite_mort,white_mort,geo_shift),names_to = "component", values_to = "change_abs")
+
+decomp_graph_data <- merge(per_decomp_long,abs_decomp_long, by=c("Wave","Race","component")) %>%
+  mutate(race_lab=case_when(Race=="Hispanic" ~ "Decomposing the National Change in Disparities for Hispanic compared to Non-Hispanic White Adults",
+                            Race=="NH Black" ~ "Decomposing the National Change in Disparities for Non-Hispanic Black compared to Non-Hispanic White Adults"))
+```
+
+```{r}
+figure1_decomp <- decomp_graph_data %>% filter(Wave %in% c("Omicron","Delta")) %>% ggplot(aes(x=change_abs,y=factor(Wave,levels=c("Omicron","Delta")), fill=factor(component,levels=c("geo_shift","white_mort","nonwhite_mort"))))+
+  facet_wrap(~factor(race_lab,levels=c("Decomposing the National Change in Disparities for Hispanic compared to Non-Hispanic White Adults",
+                                   "Decomposing the National Change in Disparities for Non-Hispanic Black compared to Non-Hispanic White Adults")), nrow=2)+
+  geom_bar(position="stack", stat="identity")+
+  geom_text(aes(label=change_per_str), position = position_stack(vjust = 0.5), size=3)+
+  xlab("Contribution to the Change in Disparities (Deaths per 100,000 person-years)")+
+  ylab("Waves Compared to Initial Wave")+
+  guides(fill=guide_legend(title="Component",
+                           nrow=3))+
+  scale_fill_discrete(labels=c('Movement of Mortality from Metropolitan to Nonmetropolitan Areas','Increase in Non-Hispanic White Death Rates', 'Decrease in Non-Hispanic Black or Hispanic Death Rates'))+
+  theme_light()+ theme(legend.position="bottom",legend.box ="vertical",panel.grid.minor.y = element_blank())
+
+figure1_decomp
+```
+
+```{r}
+jpeg(file = "../Output/figure1_delta_omicron.jpeg", width = 11, height =5, res = 300, units = 'in')
+figure1_decomp
+dev.off()
+```
+
+## APPENDIX TABLE 3 ABSOLUTE VALUES FOR COMPONENTS OF DISPARITY CHANGE
+```{r}
+
+wave_decomp_final<-readRDS("../Data/finaldata/wave_decomp_final.RDS")
+
+Table3 <- wave_decomp_final %>%
+  dplyr::select(Race, Wave, nonwhite_mort,white_mort,geo_shift,prop_shift, totalDiff) %>%
+  dplyr::arrange(Race, factor(Wave, levels =c("Second","Alpha","Delta","Omicron")))%>%
+  mutate(nonwhite_mort = round(nonwhite_mort, 1),
+         white_mort = round(white_mort, 1),
+         geo_shift = round(geo_shift, 1),
+         prop_shift = round(prop_shift, 1),
+         totalDiff = round(totalDiff, 1))
+
+write.csv(Table3,"../Output/appendix_table3_decomp.csv",row.names = FALSE)
+
+Table3 <- wave_decomp_final %>%
+  dplyr::select(Race, Wave, nonwhite_mort,white_mort,geo_shift,prop_shift, totalDiff) %>%
+  dplyr::arrange(Race, factor(Wave, levels =c("Second","Alpha","Delta","Omicron")))%>%
+  mutate(nonwhite_mort = round(nonwhite_mort, 1),
+         white_mort = round(white_mort, 1),
+         geo_shift = round(geo_shift, 1),
+         prop_shift = round(prop_shift, 1),
+         totalDiff = round(totalDiff, 1)) %>%
+  kbl(col.names = c("Race", "Wave", "Non-White Mortality", "NH White Mortality", "Geography Shift","Proportion Shift", "Total Change")) %>%
+  kable_classic_2(full_width = F) %>%
+  save_kable("../Output/appendix_table3_decomp.html")
+```
+

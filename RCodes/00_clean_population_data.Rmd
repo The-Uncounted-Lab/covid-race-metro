@@ -1,0 +1,194 @@
+---
+title: "Clean Population Data"
+author: "Ahyoung Cho & Rafeya Raquib"
+date: "Last updated on `r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+# Load packages
+library(dplyr)
+library(car)
+library(vroom)
+library(tidyverse)
+library(data.table)
+library(purrr)
+library(zoo)
+
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+#knitr::opts_knit$set(root.dir ='../covid-race-metro/')
+```
+
+### 2020 Population 
+
+County population by age, race, and sex (2020-2021)
+Source: https://www2.census.gov/programs-surveys/popest/datasets/2020-2021/counties/asrh/
+Codebook: https://www2.census.gov/programs-surveys/popest/technical-documentation/file-layouts/2020-2021/cc-est2021-alldata.pdf
+
+The key for the YEAR variable is as follows:
+1 = 4/1/2020 population estimates base
+2 = 7/1/2020 population estimate
+3 = 7/1/2021 population estimate 
+
+### Clean Data
+```{r, warning=FALSE, message = FALSE}
+
+# Import popuation data by ethnicity and age group
+# Set colClass to make sure leading zeros of first three columns are read in
+pop_data_raw_20_21 <- read.csv("../Data/population/cc-est2021-all.csv", sep=",", colClasses = c("character","character","character"))
+
+#Check Variable Types
+sapply(pop_data_raw_20_21, class)
+
+#Set variable types
+pop_data_raw_20_21[,6:ncol(pop_data_raw_20_21)] <- lapply(pop_data_raw_20_21[,6:ncol(pop_data_raw_20_21)], as.numeric)
+
+#Final Check
+sapply(pop_data_raw_20_21, class)
+
+
+#Save
+saveRDS(pop_data_raw_20_21, "../Data/population/pop_data_raw_20_21.RDS")
+
+
+# For easier reloading
+#pop_data_raw <- readRDS(here("RawData","pop_data_raw.RDS"))
+
+# Make FIPS.Code, Select mid year 2020 and 2021, recode Age Groups, rename variables
+pop_data_20_21<- pop_data_raw_20_21 %>% 
+   dplyr::mutate(FIPS.Code = as.integer(paste0(STATE, COUNTY)),
+         YearMo= dplyr::recode(YEAR,
+                           `1` = "04/01/2020",`2` = "07/01/2020", `3` = "07/01/2021"),
+         AgeGroup = dplyr::recode(AGEGRP,
+                           `0` = "All", `1` = "0-24", `2` = "0-24", `3` = "0-24", `4` = "0-24", `5` = "0-24",
+                           `6` = "25-54", `7` = "25-54", `8` = "25-54", `9` = "25-54",
+                           `10` = "25-54", `11` = "25-54", `12` = "55-74", `13` = "55-74",
+                           `14` = "55-74", `15` = "55-74", `16` = "75plus", `17` = "75plus", `18` = "75plus")) %>%
+          dplyr::rename(State=STNAME,
+                 County=CTYNAME)
+
+```
+
+###  National 2020 Standard Population Age Distribution
+```{r, warning=FALSE, message = FALSE}
+
+# Calculate national population for each age group 
+pop_national <- pop_data_20_21 %>%
+  filter(YearMo=="07/01/2020" & !AgeGroup %in% c("All","0-24")) %>% 
+  dplyr::select(AgeGroup, TOT_POP) %>% 
+  dplyr::group_by(AgeGroup) %>%
+  dplyr::summarize(Population= sum(TOT_POP)) 
+
+# Age distribution 
+age_distribution <- pop_national %>% 
+  dplyr::mutate(Distribution = Population/sum(Population)) 
+age_distribution
+
+saveRDS(age_distribution, file = "../Data/population/age_distribution.rds")
+```
+### 2020 Mid-year population age distributions (by County, Race)
+```{r, warning=FALSE, message = FALSE}
+
+pop_agegroup_county <- pop_data_20_21 %>%
+  filter(!AgeGroup %in% c("All")) %>% 
+  dplyr::select(State, County, YearMo, FIPS.Code, AgeGroup, TOT_POP, NHWA_MALE, NHWA_FEMALE,NHBA_MALE, NHBA_FEMALE,H_MALE,H_FEMALE,
+                  NHIA_MALE, NHIA_FEMALE, NHAA_MALE, NHAA_FEMALE, NHNA_MALE, NHNA_FEMALE) %>% 
+  pivot_longer(cols=TOT_POP:NHNA_FEMALE)
+
+
+# Create variable for 10 year age groups, race/ethnicity, and sex that align with CoD files
+pop_agegroup_county <- pop_agegroup_county %>% dplyr::mutate(
+  Race = 
+     ifelse(name=="TOT_POP", "All",
+      ifelse(name=="NHWA_MALE" | name == "NHWA_FEMALE", "NH White",
+             ifelse(name=="NHBA_MALE" | name == "NHBA_FEMALE", "NH Black",
+                    ifelse(name=="H_MALE" | name == "H_FEMALE", "Hispanic", 
+                           ifelse(name=="NHIA_MALE" | name == "NHIA_FEMALE", "NH AIAN",
+                                  ifelse(name=="NHAA_MALE" | name == "NHAA_FEMALE", "NH Asian",
+                                         ifelse(name=="NHNA_MALE" | name == "NHNA_FEMALE", "NH NHOPI","All")))))))) %>%
+  dplyr::group_by(State, County, AgeGroup, FIPS.Code, Race, YearMo) %>%
+  dplyr::summarize(Population = sum(value)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(YearMo,State, County, FIPS.Code, Race, AgeGroup, Population)
+
+saveRDS(pop_agegroup_county, file = "../Data/population/pop_agegroup_county.rds")
+
+# Total Population for each County
+pop_agegroup_all <- pop_agegroup_county %>% filter(Race== "All" & AgeGroup!="0-24" & YearMo=="07/01/2020") %>%
+  dplyr::group_by(FIPS.Code) %>%
+  dplyr::summarise(Population=sum(Population))
+
+saveRDS(pop_agegroup_all, file = here::here("Data","population","pop_agegroup_all.rds"))
+
+pop_21_agegroup_all <- pop_agegroup_county %>% filter(Race== "All"& AgeGroup!="0-24" & YearMo=="07/01/2021") %>%
+  dplyr::group_by(FIPS.Code) %>%
+  dplyr::summarise(Population=sum(Population))
+
+saveRDS(pop_21_agegroup_all, file = "../Data/population/pop_21_agegroup_all.rds")
+
+```
+
+#### Metro Crosswalk
+```{r, warning=FALSE, message = FALSE}
+# Import Metro Category Crosswalk 
+county_metro_walk <- read.delim(file = "../Data/population/county_metro_walk.txt") %>%
+  dplyr::select(-Notes) %>% na.omit()
+
+# merge metropolitan status
+county_metro_walk <- county_metro_walk %>% 
+  dplyr::mutate(FIPS.Code = as.integer(Residence.County.Code),
+                Metro = case_when(grepl("Large Central Metro", Residence.2013.Urbanization) ~ "Large Metro",
+                                  grepl("Large Fringe Metro", Residence.2013.Urbanization) ~ "Large Metro",
+                                  grepl("Medium Metro", Residence.2013.Urbanization) ~ "Medium/Small Metro",
+                                  grepl("Small Metro", Residence.2013.Urbanization) ~ "Medium/Small Metro",
+                                  grepl("(Nonmetro)", Residence.2013.Urbanization) ~ "Nonmetro")) %>%
+  ungroup() %>%
+  dplyr::select(FIPS.Code, Metro)
+
+saveRDS(county_metro_walk, file = "../Data/population/county_metro_walk.rds")
+
+```
+
+####Metro
+```{r,warning=FALSE, message=FALSE}
+##Chugach 02063 and Copper River 02066 are former Valdez Cordova 02261
+##Kusilvak Census Area 02158 is former Wade Hampton 02270
+##Oglala Lakota County 46102 is former Shannon COunty 46113
+pop_agegroup_county$FIPS.Code <-replace(pop_agegroup_county$FIPS.Code,pop_agegroup_county$FIPS.Code==2063,2261)
+pop_agegroup_county$FIPS.Code <-replace(pop_agegroup_county$FIPS.Code,pop_agegroup_county$FIPS.Code==2066,2261)
+pop_agegroup_county$FIPS.Code <-replace(pop_agegroup_county$FIPS.Code,pop_agegroup_county$FIPS.Code==2158,2270)
+pop_agegroup_county$FIPS.Code <-replace(pop_agegroup_county$FIPS.Code,pop_agegroup_county$FIPS.Code==46102,46113)
+
+
+pop_agegroup_metro <- inner_join(pop_agegroup_county, county_metro_walk, by = "FIPS.Code")
+pop_agegroup_metro <- pop_agegroup_metro %>% 
+  dplyr::group_by(YearMo,Metro, Race, AgeGroup) %>%
+  dplyr::summarise(Population = sum(Population)) %>% ungroup()
+
+saveRDS(pop_agegroup_metro, file = "../Data/population/pop_agegroup_metro.rds")
+```
+
+```{r}
+pop_agegroup_metro_long <- pop_agegroup_metro %>% dplyr::mutate(Year=case_when(YearMo=="04/01/2020"~2020,
+                                                                               YearMo=="07/01/2020"~2020,
+                                                                               YearMo=="07/01/2021"~2021),
+                                                                Month=case_when(YearMo=="04/01/2020"~4,
+                                                                               YearMo=="07/01/2020"~7,
+                                                                               YearMo=="07/01/2021"~7)) %>%
+  dplyr::select(-YearMo) %>% dplyr::group_by(Metro,Race,AgeGroup)%>%
+  complete(Year=2020:2022,Month=1:12)%>% 
+  dplyr::filter((Year==2020 & Month >=3) | Year ==2021 | (Year==2022 & Month <=2)) %>%
+  dplyr::mutate(Population=na.approx(Population,na.rm=FALSE),
+         Population=coalesce(Population, c(Population[2]-(Population[3]-Population[2]),
+                                           1:16,
+                                           Population[17]+(Population[17]-Population[16]),
+                                            Population[17]+(Population[17]-Population[16])*2,
+                                            Population[17]+(Population[17]-Population[16])*3,
+                                            Population[17]+(Population[17]-Population[16])*4,
+                                            Population[17]+(Population[17]-Population[16])*5,
+                                            Population[17]+(Population[17]-Population[16])*6,
+                                            Population[17]+(Population[17]-Population[16])*7)))
+
+saveRDS(pop_agegroup_metro_long, "../Data/population/population_monthly_metro_race_age.RDS")
+```
+
