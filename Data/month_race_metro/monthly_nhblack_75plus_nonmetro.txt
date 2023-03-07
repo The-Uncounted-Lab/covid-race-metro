@@ -1,0 +1,80 @@
+"Notes"	"Month"	"Month Code"	Deaths
+	"Mar., 2020"	"2020/03"	24
+	"Apr., 2020"	"2020/04"	254
+	"May, 2020"	"2020/05"	315
+	"Jun., 2020"	"2020/06"	180
+	"Jul., 2020"	"2020/07"	338
+	"Aug., 2020"	"2020/08"	464
+	"Sep., 2020"	"2020/09"	308
+	"Oct., 2020"	"2020/10"	235
+	"Nov., 2020"	"2020/11"	355
+	"Dec., 2020"	"2020/12"	580
+	"Jan., 2021 (provisional)"	"2021/01"	779
+	"Feb., 2021 (provisional)"	"2021/02"	360
+	"Mar., 2021 (provisional)"	"2021/03"	154
+	"Apr., 2021 (provisional)"	"2021/04"	76
+	"May, 2021 (provisional)"	"2021/05"	73
+	"Jun., 2021 (provisional)"	"2021/06"	36
+	"Jul., 2021 (provisional)"	"2021/07"	64
+	"Aug., 2021 (provisional)"	"2021/08"	253
+	"Sep., 2021 (provisional)"	"2021/09"	322
+	"Oct., 2021 (provisional)"	"2021/10"	152
+	"Nov., 2021 (provisional)"	"2021/11"	57
+	"Dec., 2021 (provisional)"	"2021/12"	83
+	"Jan., 2022 (provisional)"	"2022/01"	489
+	"Feb., 2022 (provisional)"	"2022/02"	326
+"Total"			6277
+"---"
+"Dataset: Provisional Mortality Statistics, 2018 through Last Month"
+"Query Parameters:"
+"Title: monthly_nhblack_75plus_nonmetro"
+"Hispanic Origin: Not Hispanic or Latino"
+"MCD - ICD-10 Codes: U07.1 (COVID-19)"
+"Residence 2013 Urbanization: Micropolitan (Nonmetro); NonCore (Nonmetro)"
+"Single Race 6: Black or African American"
+"Ten-Year Age Groups: 75-84 years; 85+ years"
+"Year/Month: Mar., 2020; Apr., 2020; May, 2020; Jun., 2020; Jul., 2020; Aug., 2020; Sep., 2020; Oct., 2020; Nov., 2020; Dec.,"
+"2020; 2021 (provisional); Jan., 2022 (provisional); Feb., 2022 (provisional)"
+"Group By: Month"
+"Show Totals: True"
+"Show Zero Values: True"
+"Show Suppressed: True"
+"Calculate Rates Per: 100,000"
+"Rate Options: Default intercensal populations for years 2001-2009 (except Infant Age Groups)"
+"---"
+"Help: See http://wonder.cdc.gov/wonder/help/mcd-provisional.html for more information."
+"---"
+"Query Date: Feb 15, 2023 10:41:19 AM"
+"---"
+"Suggested Citation: Centers for Disease Control and Prevention, National Center for Health Statistics. National Vital Statistics"
+"System, Provisional Mortality on CDC WONDER Online Database. Data are from the final Multiple Cause of Death Files, 2018-2020,"
+"and from provisional data for years 2021-2022, as compiled from data provided by the 57 vital statistics jurisdictions through"
+"the Vital Statistics Cooperative Program. Accessed at http://wonder.cdc.gov/mcd-icd10-provisional.html on Feb 15, 2023 10:41:19"
+"AM"
+"---"
+Messages:
+"1. Population and Rates are not available when values are selected for Single-Year Ages or Ten-Year Age Groups in section 3 or"
+"they appear in Group Results By list in section 1, and county level locations or urbanization values are selected in section 2"
+"or County or Urbanization appears in the Group Results By list in section 1. Population, Rates and related measures have been"
+"removed from the results. #Constraints-Rates#"
+"---"
+Caveats:
+"1. Deaths of persons with Age ""Not Stated"" are included in ""All"" counts and rates, but are not distributed among age groups,"
+"so are not included in age-specific counts, age-specific rates or in any age-adjusted rates. More information:"
+"http://wonder.cdc.gov/wonder/help/mcd-provisional.html#Not Stated."
+"2. Deaths of persons with Hispanic origin ""Not Stated"" are included in ""All"" counts and rates, but are not distributed among"
+"Hispanic Origin groups, so are not included in the Hispanic Origin specific counts and rates. More information:"
+"http://wonder.cdc.gov/wonder/help/mcd-provisional.html#Not Stated."
+"3. Information included on the death certificate about the race and Hispanic ethnicity of the decedent is reported by the"
+"funeral director as provided by an informant, often the surviving next of kin, or, in the absence of an informant, on the basis"
+"of observation. Race and ethnicity information from the census is by self-report. To the extent that race and Hispanic origin"
+"are inconsistent between these two data sources, death rates will be biased. More information:"
+"http://wonder.cdc.gov/wonder/help/mcd-provisional.html#Racial Differences."
+"4. The population figures for years 2021 and 2020 are single-race estimates of the July 1 resident population, from the Vintage"
+"2020 postcensal series released by the Census Bureau on July 27, 2021. The population figures for year 2019 are single-race"
+"estimates of the July 1 resident population, from the Vintage 2019 postcensal series released by the Census Bureau on June 25,"
+"2020. The population figures for year 2018 are single-race estimates of the July 1 resident population, from the Vintage 2018"
+"postcensal series released by the Census Bureau on June 20, 2019."
+"5. Changes to cause of death classification affect reporting trends. More information:"
+"http://wonder.cdc.gov/wonder/help/mcd-provisional.html#ICD-10 Changes."
+"6. Deaths occurring through December 17, 2022 as of January 02, 2023."
