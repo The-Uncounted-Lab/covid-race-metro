@@ -1,11 +1,9 @@
 ---
-title: "Appendix Table 1"
+title: "Descriptive Statistics"
 author: "Ahyoung Cho & Rafeya Raquib"
 date: "Last updated on `r format(Sys.time(), '%d %B, %Y')`"
 output: html_document
 ---
-
-Last updated on February 23, 2023
 
 ```{r setup, include=FALSE, message=FALSE}
 # Load packages
@@ -25,44 +23,8 @@ library(ggplot2)
 library(zoo)
 
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
-#knitr::opts_knit$set(root.dir ='../covid-race-metro/')
+#knitr::opts_knit$set(root.dir ='covid-race-metro')
 ```
-
-# Table 1 Part 1
-
-```{r}
-# Import population data 
-pop_agegroup_metro<- readRDS(file = "../Data/population/pop_agegroup_metro.rds") %>%
-  dplyr::filter(AgeGroup!="0-24" & YearMo=="07/01/2020")%>%
-  dplyr::select(-YearMo) %>%
-  mutate(Year = "2020")
-pop_21_agegroup_metro<- readRDS(file = "../Data/population/pop_agegroup_metro.rds") %>%
-  dplyr::filter(AgeGroup!="0-24" & YearMo=="07/01/2021")%>%
-  dplyr::select(-YearMo) %>%
-  mutate(Year = "2021")
-pop_metro <- rbind(pop_agegroup_metro, pop_21_agegroup_metro)
-
-
-##Race categories of interest
-pop_metro1 <- pop_metro %>%
-  filter(Race == "Hispanic" | Race == "NH Black" | Race == "NH White"| Race == "All") %>%
-  dplyr::group_by(Race, Metro, Year) %>%
-  dplyr::summarise(Population = sum(Population)) %>%
-  pivot_wider(names_from = Year, values_from = Population) %>%
-  mutate(Race = dplyr::recode(Race, "NH Black" = "Non-Hispanic Black", "NH White" = "Non-Hispanic White"))
-
-pop_metro2 <- pop_metro1 %>%
-  dplyr::group_by(Race) %>%
-  dplyr::mutate(tot_2020=sum(`2020`),
-                tot_2021=sum(`2021`))%>%
-  dplyr::ungroup()%>%
-  dplyr::group_by(Race,Metro) %>%
-  dplyr::summarise(Prop2020 = `2020` / tot_2020 * 100,
-                   Prop2021 = `2021` / tot_2021 * 100)%>%
-  dplyr::ungroup()
-```
-
-# Table 1 Part 1
 
 ```{r, warning=FALSE, message = FALSE}
 clean_data <- function(data) {
@@ -162,55 +124,127 @@ df_death_total <- list_of_files %>%
 
 ```{r}
 df_death <- rbind(df_death, df_death_total)
+
+metro_wave_race <- df_death %>% dplyr::group_by(Metro,Wave,Race)%>%
+  dplyr::summarise(Deaths=sum(Deaths)) %>% ungroup()
+
+race <- metro_wave_race %>% dplyr::group_by(Race)%>%
+  dplyr::summarise(Deaths=sum(Deaths)) %>% ungroup() %>%
+  dplyr::add_row(Race="Other",Deaths=sum(metro_wave_race$Deaths[metro_wave_race$Race=="All"])-
+                   sum(metro_wave_race$Deaths[metro_wave_race$Race!="All"]))%>%
+  dplyr::mutate(Percent=round(Deaths/977018*100,1))
+
 ```
 
 ```{r}
-df_death_prop1 <- df_death %>%
-  dplyr::group_by(Race, Metro, Wave) %>%
-  dplyr::summarise(Deaths = sum(Deaths)) %>%
-  pivot_wider(names_from = Wave, values_from = Deaths) 
+######################
+##IMPORT/CLEAN DATA ##
+######################
+age <- data.table::fread('../Data/descriptive/age.txt',
+  na.strings = c("Missing", "Suppressed", "Not Applicable"),
+  keepLeadingZeros = TRUE) %>% 
+  dplyr::select(`Single-Year Ages Code`,Deaths) %>%
+  dplyr::rename(deaths=Deaths,
+         age=`Single-Year Ages Code`) %>% na.omit()
 
-df_death_prop2 <- df_death_prop1 %>%
-  dplyr::group_by(Race) %>%
-  dplyr::mutate(tot_initial=sum(Initial),
-                tot_second=sum(Second),
-                tot_alpha=sum(Alpha),
-                tot_delta=sum(Delta),
-                tot_omicron=sum(Omicron))%>%
-  dplyr::ungroup()%>%
-  dplyr::group_by(Race,Metro) %>%
-  dplyr::summarise(PropInitial = Initial / tot_initial * 100,
-                   PropSecond = Second / tot_second * 100,
-                   PropAlpha = Alpha / tot_alpha * 100,
-                   PropDelta = Delta / tot_delta * 100,
-                   PropOmicron = Omicron / tot_omicron * 100)%>%
-  dplyr::ungroup()
+gender <- data.table::fread(
+  '../Data/descriptive/gender.txt',
+  na.strings = c("Missing", "Suppressed", "Not Applicable"),
+  keepLeadingZeros = TRUE) %>% 
+  dplyr::select(Gender, Deaths) %>%
+  dplyr::rename(deaths=Deaths,
+         gender=Gender)
+
+duplicate_index <- rep(1:nrow(age), age$deaths)
+
+long_age <- age[duplicate_index,]
+
+age_avg <- long_age %>% dplyr::summarise(mean=mean(age),
+                                         sd=sd(age))
+gender_per <- gender %>% dplyr::filter(gender %in% c("Male","Female")) %>% dplyr::mutate(Percent=round(deaths/sum(deaths)*100,1))
 ```
 
 
 ```{r}
-Table1 <- merge(pop_metro2, df_death_prop2, by=c("Race","Metro")) 
-write.csv(Table1,"../Output/appendix_table1.csv")
+pop_agegroup_metro<- readRDS(file = "../Data/population/pop_agegroup_metro.rds") %>%
+  dplyr::filter(AgeGroup!="0-24") %>%
+  dplyr::group_by(Metro,Race)%>%
+  dplyr::summarise(pop_avg=round(sum(Population)/24,0)) %>%
+  ungroup() %>%
+  dplyr::group_by(Race)%>%
+  dplyr::mutate(tot=sum(pop_avg),
+                per=round(pop_avg/sum(pop_avg)*100,1))
+
 ```
 
+
 ```{r}
-Table1_formatted <- Table1 %>%
-  mutate(Prop2020 = round(Prop2020, 1),
-         Prop2021 = round(Prop2021, 1),
-         PropInitial = round(PropInitial, 1), 
-         PropSecond = round(PropSecond, 1),
-         PropAlpha = round(PropAlpha, 1),
-         PropDelta = round(PropDelta, 1),
-         PropOmicron = round(PropOmicron, 1)) %>%
-  mutate(Prop2020 = paste(Prop2020, "%"),
-         Prop2021 = paste(Prop2021, "%"),
-         PropInitial = paste(PropInitial, "%"), 
-         PropSecond = paste(PropSecond, "%"),
-         PropAlpha = paste(PropAlpha, "%"),
-         PropDelta = paste(PropDelta, "%"),
-         PropOmicron = paste(PropOmicron, "%")) %>%
-  kbl(col.names = c("Race/Ethnic Groups", "Metro-Nonmetro Categories", "2020", "2021",
-                    "Initial Wave: Part One", "Initial Wave: Part Two", "Alpha", "Delta", "Omicron")) %>%
-  kable_classic_2(full_width = F) %>%
-  save_kable("../Output/appendix_table1.html")
+# Clean Non-Hispanic 
+clean_nh <- function(data) {
+  data %>%
+  filter(Single.Race.6 == "American Indian or Alaska Native" | Single.Race.6 == "Asian" | Single.Race.6 == "Black or African American" | Single.Race.6 == "Native Hawaiian or Other Pacific Islander" | Single.Race.6 == "White") %>%
+  dplyr::rename(Race = Single.Race.6) %>%
+  mutate(Year = case_when(grepl("yr1_", FileName) ~ "Y1",
+                           grepl("yr2_", FileName) ~ "Y2"),
+         Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                           grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                           grepl("_nonmetro", FileName) ~ "Nonmetro"),
+         AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                           grepl("_55_74", FileName) ~ "55-74",
+                           grepl("_75plus", FileName) ~ "75plus",
+                           grepl("all", FileName) ~ "All"),
+         Race = dplyr::recode(Race, `American Indian or Alaska Native` = "NH AIAN",
+                              `Asian` = "NH Asian",
+                              `Black or African American` = "NH Black",
+                              `Native Hawaiian or Other Pacific Islander` = "NH NHOPI",
+                              `White` = "NH White")) %>%
+  dplyr::select(FileName, Year, Race, AgeGroup, Deaths, Metro)
+}
+
+list_of_files_nh <- list.files(path = "../Data/year_race_metro/", recursive = TRUE,
+                            pattern = "([a-zA-Z0-9]*)+_nonhisp+_([a-zA-Z0-9]*).*.txt", 
+                            full.names = TRUE)
+
+df_nh <- list_of_files_nh %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName") %>%
+  as.tibble() %>%
+  clean_nh()
+
+
+# Clean Hispanic
+clean_hispanic <- function(data) {
+  data %>% filter(Notes != "Total") %>%
+  mutate(Year = case_when(grepl("yr1_", FileName) ~ "Y1",
+                           grepl("yr2_", FileName) ~ "Y2"),
+         Race = "Hispanic",
+         Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                           grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                           grepl("_nonmetro", FileName) ~ "Nonmetro"),
+         AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                           grepl("_55_74", FileName) ~ "55-74",
+                           grepl("_75plus", FileName) ~ "75plus",
+                           grepl("all", FileName) ~ "All")) %>%
+  dplyr::select(FileName, Year, Race, AgeGroup, Deaths, Metro)
+}
+
+
+list_of_files_hispanic <- list.files(path = "../Data/year_race_metro/", recursive = TRUE,
+                            pattern = "([a-zA-Z0-9]*)+_hisp+_([a-zA-Z0-9]*).*.txt", 
+                            full.names = TRUE)
+
+df_hispanic <- list_of_files_hispanic %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName") %>%
+  as.tibble() %>%
+  clean_hispanic() %>% drop_na(Deaths)
+
+# Metro dataset
+df_death <- bind_rows(df_nh, df_hispanic)
+
+year_race <- df_death %>% dplyr::group_by(Year,Race) %>% dplyr::summarise(Deaths=sum(Deaths))
 ```
+
+
+
+

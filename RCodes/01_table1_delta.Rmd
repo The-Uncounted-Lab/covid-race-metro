@@ -187,67 +187,44 @@ saveRDS(finaldata_metro, file = "../Data/finaldata/finaldata_metro_initial_delta
 ```
 
 ```{r total}
-df_death_total <- df_death %>%
-  dplyr::group_by(Wave, Race, AgeGroup) %>%
-  dplyr::summarise(Deaths = sum(Deaths))
-
 pop_agegroup_metro_total <- pop_agegroup_metro %>%
-  dplyr::group_by(Race, Wave, AgeGroup) %>%
-  dplyr::summarise(Population = sum(Population)) 
+  dplyr::group_by(Race, Wave, Metro) %>%
+  dplyr::summarise(Population = sum(Population))%>%
+  dplyr::ungroup()%>%
+  dplyr::group_by(Race, Wave) %>%
+  dplyr::mutate(prop=Population/sum(Population))%>%
+  dplyr::ungroup()
+
+initial_pop <-pop_agegroup_metro_total %>% filter(Wave=="Initial") %>%
+  dplyr::select(Race,Metro,prop)%>%
+  dplyr::rename(initial_prop=prop)
+delta_pop <-pop_agegroup_metro_total %>% filter(Wave=="Delta")%>%
+  dplyr::select(Race,Metro,prop)%>%
+  dplyr::rename(delta_prop=prop)
 
 ```
 
 ```{r, warning=FALSE, message = FALSE}
-initial_mortality_pop <- inner_join(df_death_total, pop_agegroup_metro_total, by = c("Race", "AgeGroup","Wave")) %>% filter(Wave == "Initial")
-delta_mortality_pop <- inner_join(df_death_total, pop_agegroup_metro_total, by = c("Race", "AgeGroup","Wave")) %>% filter(Wave == "Delta")
+join1 <- inner_join(finaldata_metro, initial_pop, by=c("Race","Metro")) 
 
-# Crude Death Rate 
-initial_cdr <-  initial_mortality_pop %>% 
+finaldata_metro_total <- inner_join(join1, delta_pop, by=c("Race","Metro")) %>% # merge with national age distribution
+  dplyr::mutate(initial_popadj = initial_ASDR*initial_prop,
+                initial_popadj_var=initial_ASDR_var*initial_prop**2,
+                delta_popadj =  delta_ASDR*delta_prop,
+                delta_popadj_var=delta_ASDR_var*delta_prop**2)%>% # multiply CDR with age distribution 
   dplyr::group_by(Race) %>%
-  dplyr::summarize(Deaths=sum(Deaths), Population_sum=sum(Population)) %>%
-  dplyr::mutate(initial_CDR = Deaths / Population_sum * 100000) %>% 
-  dplyr::select(Race, initial_CDR) 
+  dplyr::summarise(initial_ASDR = sum(initial_popadj),
+                   initial_ASDR_var=sum(initial_popadj_var),
+                   delta_ASDR = sum(delta_popadj),
+                   delta_ASDR_var=sum(delta_popadj_var))%>%
+  dplyr::ungroup()%>%
+  dplyr::mutate(Metro="Total")
 
-delta_cdr <-  delta_mortality_pop %>% 
-  dplyr::group_by(Race) %>%
-  dplyr::summarize(Deaths=sum(Deaths),Population_sum=sum(Population)) %>%
-  dplyr::mutate(delta_CDR = Deaths / Population_sum * 100000) %>% 
-  dplyr::select(Race, delta_CDR) 
-
-## Race/Age Specific Death Rates
-initial_ar_deaths <-  initial_mortality_pop %>% 
-  dplyr::group_by(Race) %>%
-  dplyr::mutate(DR = Deaths / Population * 100000) 
-
-delta_ar_deaths <-  delta_mortality_pop %>% 
-  dplyr::group_by(Race) %>%
-  dplyr::mutate(DR = Deaths / Population * 100000) 
-
-# Calculate age standardized death rate 
-initial_finaldata <- inner_join(initial_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
-  dplyr::mutate(Product = DR * Distribution,
-                ProductVar=(Distribution**2)*(DR**2)*(1/Deaths)) %>% # multiply CDR with age distribution 
-  dplyr::group_by(Race) %>%
-  dplyr::summarise(initial_ASDR = sum(Product),
-                   initial_ASDR_var=sum(ProductVar)) 
-
-# Calculate age standardized death rate 
-delta_finaldata <- inner_join(delta_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
-  dplyr::mutate(Product = DR * Distribution,
-                ProductVar=(Distribution**2)*(DR**2)*(1/Deaths)) %>% # multiply CDR with age distribution 
-  dplyr::group_by(Race) %>%
-  dplyr::summarise(delta_ASDR = sum(Product),
-                   delta_ASDR_var=sum(ProductVar)) 
-
-df_list <- list(initial_cdr, initial_finaldata, delta_cdr, delta_finaldata)
-
-finaldata_metro_total <- df_list %>% reduce(inner_join, by = c("Race"))
-finaldata_metro_total <- finaldata_metro_total %>% mutate(Metro = "Total")
 
 saveRDS(finaldata_metro_total, file = "../Data/finaldata/finaldata_metro_total_initial_delta.rds")
 ```
 
-### Create Table 2
+### Create Table 1
 
 ```{r fig.asp = 0.8, fig.width = 10, include = FALSE, warning=FALSE, message = FALSE}
 finaldata_metro <- readRDS(file = "../Data/finaldata/finaldata_metro_initial_delta.rds")
@@ -297,20 +274,20 @@ write.csv(Table1,"../Output/table1_delta.csv")
 
 ```{r fig.asp = 0.8, fig.width = 10, warning=FALSE, message = FALSE}
 Table1_formatted <- Table1 %>%
-  mutate(initial_ASDR = round(initial_ASDR, 0),
-         delta_ASDR = round(delta_ASDR, 0),
-         pct_change_dr = round(pct_change_dr, 0),
-         pct_change_dr_lower = round(pct_change_dr_lower, 0),
-         pct_change_dr_upper = round(pct_change_dr_upper, 0),
-         initial_rr = round(initial_rr, 2),
-         initial_rr_lower = round(initial_rr_lower, 2),
-         initial_rr_upper = round(initial_rr_upper, 2),
-         delta_rr = round(delta_rr, 2),
-         delta_rr_lower = round(delta_rr_lower, 2),
-         delta_rr_upper = round(delta_rr_upper, 2),
-         pct_change_rr = round(pct_change_rr, 0),
-         pct_change_rr_lower = round(pct_change_rr_lower, 0),
-         pct_change_rr_upper = round(pct_change_rr_upper, 0)) %>% # changed
+  mutate(initial_ASDR = round(initial_ASDR, 1),
+         delta_ASDR = round(delta_ASDR, 1),
+         pct_change_dr = round(pct_change_dr, 1),
+         pct_change_dr_lower = round(pct_change_dr_lower, 1),
+         pct_change_dr_upper = round(pct_change_dr_upper, 1),
+         initial_rr = round(initial_rr, 1),
+         initial_rr_lower = round(initial_rr_lower, 1),
+         initial_rr_upper = round(initial_rr_upper, 1),
+         delta_rr = round(delta_rr, 1),
+         delta_rr_lower = round(delta_rr_lower, 1),
+         delta_rr_upper = round(delta_rr_upper, 1),
+         pct_change_rr = round(pct_change_rr, 1),
+         pct_change_rr_lower = round(pct_change_rr_lower, 1),
+         pct_change_rr_upper = round(pct_change_rr_upper, 1)) %>% # changed
   mutate(pct_change_dr_chr = paste(pct_change_dr, "(", pct_change_dr_lower, "to", pct_change_dr_upper, ")"),
          initial_rr_chr = paste(initial_rr, "(", initial_rr_lower, "to", initial_rr_upper, ")"),
          delta_rr_chr = paste(delta_rr, "(", delta_rr_lower, "to", delta_rr_upper, ")"),

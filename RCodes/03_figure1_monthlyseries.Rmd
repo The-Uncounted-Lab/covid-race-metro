@@ -1,0 +1,277 @@
+---
+title: "Figure 1 Monthly Series"
+author: "Ahyoung Cho & Rafeya Raquib"
+date: "Last updated on `r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+# Load packages
+library(dplyr)
+library(plyr)
+library(car)
+library(vroom)
+library(tidyverse)
+library(tidyr)
+library(tidyselect)
+library(data.table)
+library(purrr)
+library(knitr)
+library(DT)
+library(kableExtra)
+library(ggplot2)
+library(zoo)
+
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+#knitr::opts_knit$set(root.dir ='../covid-race-metro/')
+```
+
+```{r, warning=FALSE, message = FALSE}
+clean_data <- function(data) {
+  data %>%
+    filter(Notes != "Total") %>%
+    mutate(AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                                grepl("_55_74", FileName) ~ "55-74",
+                                grepl("_75plus", FileName) ~ "75plus"),
+           Race = case_when(grepl("hisp", FileName) ~ "Hispanic",
+                                grepl("nhwhite", FileName) ~ "NH White",
+                                grepl("nhblack", FileName) ~ "NH Black"),
+           Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                            grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                            grepl("_nonmetro", FileName) ~ "Nonmetro"),
+           Wave = case_when(Month.Code %in% c("2020/03", "2020/04", 
+                                              "2020/05") ~ "Initial", 
+                            Month.Code %in% c( "2020/06","2020/07", 
+                                               "2020/08") ~ "Second",
+                            Month.Code %in% c("2020/09", "2020/10", "2020/11", 
+                                              "2020/12", "2021/01", 
+                                              "2021/02", "2021/03", 
+                                              "2021/04", "2021/05") ~ "Alpha",
+                            Month.Code %in% c("2021/06", "2021/07","2021/08", 
+                                              "2021/09", "2021/10") ~ "Delta",
+                            Month.Code %in% c("2021/11", "2021/12", "2022/01", "2022/02") ~ "Omicron",
+                            TRUE ~ Month.Code),
+           Year = case_when(substr(Month.Code,1,4)=="2020" ~ 2020,
+                              substr(Month.Code,1,4)=="2021" ~ 2021,
+                              substr(Month.Code,1,4)=="2022" ~ 2022
+                            ),
+            Month = case_when(substr(Month.Code,6,7)=="01" ~ 1,
+                              substr(Month.Code,6,7)=="02" ~ 2,
+                              substr(Month.Code,6,7)=="03" ~ 3,
+                              substr(Month.Code,6,7)=="04" ~ 4,
+                              substr(Month.Code,6,7)=="05" ~ 5,
+                              substr(Month.Code,6,7)=="06" ~ 6,
+                              substr(Month.Code,6,7)=="07" ~ 7,
+                              substr(Month.Code,6,7)=="08" ~ 8,
+                              substr(Month.Code,6,7)=="09" ~ 9,
+                              substr(Month.Code,6,7)=="10" ~ 10,
+                              substr(Month.Code,6,7)=="11" ~ 11,
+                              substr(Month.Code,6,7)=="12" ~ 12
+                            )) %>%
+    dplyr::select(FileName, Metro, Year, Month, Month.Code, Wave, Race, AgeGroup, Deaths) %>%
+    mutate(Wave = na_if(Wave, "")) %>%
+    na.omit() %>%
+    mutate_all(funs(replace(., .=='Suppressed', NA))) %>%
+    dplyr::mutate(Deaths = as.integer(Deaths))
+}
+
+list_of_files <- list.files(path = "../Data/month_race_metro/", recursive = TRUE,
+                            pattern = ".txt", 
+                            full.names = TRUE)
+
+df_death <- list_of_files %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName",  colClasses=c("character")) %>%
+  clean_data()
+```
+
+```{r}
+# Rows with NAs 
+# 3 are NAs
+nrow(df_death)
+NAs <- subset(df_death, is.na(df_death$Deaths)) 
+df_death$Imputed <- ifelse(is.na(df_death$Deaths), "Imputed", "Not")
+```
+
+```{r}
+# Replace NAs with beta distribution 
+set.seed(12345)
+df_death$Deaths[is.na(df_death$Deaths)] <- sample(floor((rbeta(nrow(df_death), 2, 3)*10)), sum(is.na(df_death$Deaths)), replace = TRUE) 
+
+df_death_imputed <- df_death %>% filter(Imputed == "Imputed")
+summary(df_death_imputed$Deaths)
+summary(df_death$Deaths)
+
+```
+
+```{r}
+# Import population data 
+age_distribution <- readRDS(file = "../Data/population/age_distribution.rds") 
+pop_agegroup_metro <- readRDS(file = "../Data/population/population_monthly_metro_race_age.RDS")%>%
+  filter(AgeGroup != "0-24") %>%
+  dplyr::mutate(Population=Population/12)
+```
+
+
+```{r, warning=FALSE, message = FALSE}
+mortality_pop <- inner_join(df_death, pop_agegroup_metro, by = c("Metro", "Race", "AgeGroup","Year","Month"))
+
+cdr_metro <- mortality_pop %>% 
+  dplyr::group_by(Metro, Month.Code, Race) %>%
+  dplyr::summarize(Deaths=sum(Deaths),Population_sum=sum(Population)) %>%
+  dplyr::mutate(CDR = Deaths / Population_sum * 100000) %>% 
+  dplyr::select(Metro, Race, CDR) 
+
+
+## Race/Age Specific Death Rates
+ar_deaths <-  mortality_pop %>% 
+  dplyr::group_by(Metro, Month.Code, Race) %>%
+  dplyr::mutate(DR = Deaths / Population * 100000) 
+
+# Calculate age standardized death rate 
+finaldata <- inner_join(ar_deaths, age_distribution, by=c("AgeGroup")) %>% 
+  dplyr::mutate(Product = DR * Distribution) %>% # multiply CDR with age distribution 
+  dplyr::group_by(Race, Month.Code, Metro) %>%
+  dplyr::summarise(ASDR = sum(Product)) 
+
+finaldata_metro <- inner_join(cdr_metro, finaldata)
+saveRDS(finaldata_metro, file = "../Data/finaldata/finaldata_monthly_metro.rds")
+```
+
+### Generate monthly ASDR (total)
+
+```{r, warning=FALSE, message = FALSE}
+clean_total_data <- function(data) {
+  data %>%
+    filter(Notes != "Total") %>%
+    mutate(AgeGroup = case_when(grepl("_25_54", FileName) ~ "25-54",
+                                grepl("_55_74", FileName) ~ "55-74",
+                                grepl("_75plus", FileName) ~ "75plus"),
+           Race = case_when(grepl("total", FileName) ~ "Total"),
+           Metro = case_when(grepl("large", FileName) ~ "Large Metro",
+                            grepl("_medsmall", FileName) ~ "Medium/Small Metro",
+                            grepl("_nonmetro", FileName) ~ "Nonmetro"),
+           Wave = case_when(Month.Code %in% c("2020/03", "2020/04", 
+                                              "2020/05") ~ "Initial", 
+                            Month.Code %in% c( "2020/06","2020/07", 
+                                               "2020/08") ~ "Second",
+                            Month.Code %in% c("2020/09", "2020/10", "2020/11", 
+                                              "2020/12", "2021/01", 
+                                              "2021/02", "2021/03", 
+                                              "2021/04", "2021/05") ~ "Alpha",
+                            Month.Code %in% c("2021/06", "2021/07","2021/08", 
+                                              "2021/09", "2021/10") ~ "Delta",
+                            Month.Code %in% c("2021/11", "2021/12", "2022/01", "2022/02") ~ "Omicron",
+                            TRUE ~ Month.Code),
+           Year = case_when(substr(Month.Code,1,4)=="2020" ~ 2020,
+                              substr(Month.Code,1,4)=="2021" ~ 2021,
+                              substr(Month.Code,1,4)=="2022" ~ 2022
+                            ),
+            Month = case_when(substr(Month.Code,6,7)=="01" ~ 1,
+                              substr(Month.Code,6,7)=="02" ~ 2,
+                              substr(Month.Code,6,7)=="03" ~ 3,
+                              substr(Month.Code,6,7)=="04" ~ 4,
+                              substr(Month.Code,6,7)=="05" ~ 5,
+                              substr(Month.Code,6,7)=="06" ~ 6,
+                              substr(Month.Code,6,7)=="07" ~ 7,
+                              substr(Month.Code,6,7)=="08" ~ 8,
+                              substr(Month.Code,6,7)=="09" ~ 9,
+                              substr(Month.Code,6,7)=="10" ~ 10,
+                              substr(Month.Code,6,7)=="11" ~ 11,
+                              substr(Month.Code,6,7)=="12" ~ 12
+                            )) %>%
+    dplyr::select(FileName, Metro, Year, Month, Month.Code, Wave, Race, AgeGroup, Deaths) %>%
+    mutate(Wave = na_if(Wave, "")) %>%
+    na.omit() %>%
+    mutate_all(funs(replace(., .=='Suppressed', NA))) %>%
+    dplyr::mutate(Deaths = as.integer(Deaths))
+}
+
+list_of_files <- list.files(path = "../Data/month_metro/", recursive = TRUE,
+                            pattern = ".txt", 
+                            full.names = TRUE)
+
+df_death_total <- list_of_files %>%
+  purrr::set_names(nm = (basename(.) %>% tools::file_path_sans_ext())) %>%
+  purrr::map_df(read.delim, .id = "FileName",  colClasses=c("character")) %>%
+  clean_total_data()
+```
+
+
+```{r}
+pop_agegroup_metro_total <- pop_agegroup_metro %>% filter(Race=="All")
+```
+
+
+```{r, warning=FALSE, message = FALSE}
+mortality_pop <- inner_join(df_death_total, pop_agegroup_metro_total, by = c("Metro", "AgeGroup","Year","Month")) 
+
+cdr_metro <- mortality_pop %>% 
+  dplyr::group_by(Month.Code, Metro) %>%
+  dplyr::summarize(Deaths=sum(Deaths),Population_sum=sum(Population)) %>%
+  dplyr::mutate(CDR = Deaths / Population_sum * 100000) %>% 
+  dplyr::select(Metro, CDR) 
+
+## Race/Age Specific Death Rates
+ar_deaths <-  mortality_pop %>% 
+  dplyr::group_by(Month.Code, Metro) %>%
+  dplyr::mutate(DR = Deaths / Population * 100000) 
+
+# Calculate age standardized death rate 
+finaldata <- inner_join(ar_deaths, age_distribution, by=c("AgeGroup")) %>% 
+  dplyr::mutate(Product = DR * Distribution) %>% # multiply CDR with age distribution 
+  dplyr::group_by(Metro, Month.Code) %>%
+  dplyr::summarise(ASDR = sum(Product)) 
+
+finaldata_metro_total <- inner_join(cdr_metro, finaldata)
+finaldata_metro_total$Race <- "Total"
+saveRDS(finaldata_metro_total, file = "../Data/finaldata/finaldata_monthly_metro_total_race.rds")
+```
+
+
+### Figure 1 (previous)
+```{r fig.height = 15, fig.width = 12, warning=FALSE, message = FALSE}
+finaldata_metro <- readRDS(file = "../Data/finaldata/finaldata_monthly_metro.rds")
+finaldata_metro_total <- readRDS(file = "../Data/finaldata/finaldata_monthly_metro_total_race.rds")
+finaldata_metro_all <- rbind(finaldata_metro, finaldata_metro_total)
+
+finaldata_metro_all <- finaldata_metro_all %>% 
+                    mutate(Month.Code = as.yearmon(finaldata_metro_all$Month.Code, "%Y/%m"))
+
+Figure2 <- ggplot(data= finaldata_metro_all %>%
+                    mutate(Race = dplyr::recode(Race, 
+                                                "Total" = "All Racial and Ethnic Groups",
+                                                "NH Black" = "Non-Hispanic Black",
+                                                "NH White" = "Non-Hispanic White"),
+                           Race = factor(Race, levels = c("All Racial and Ethnic Groups", "Hispanic", "Non-Hispanic Black", "Non-Hispanic White")),
+                           Metro = factor(Metro, levels = c("Large Metro", "Medium/Small Metro", "Nonmetro"))),
+                  aes(x= Month.Code, y=ASDR, color = Metro)) +
+  geom_line(size = 1.5) +
+  facet_wrap(~ Race, nrow = 4) +
+  #ylim(0, 105) +
+  scale_x_yearmon(breaks = seq(from = min(finaldata_metro_all$Month.Code), 
+                               to = max(finaldata_metro_all$Month.Code), by = 0.25)) +
+  labs(x = " ", y = "Age-Standardized COVID-19 Deaths per 100,000 person-years", fill = "",
+       color = "Metro") +
+  geom_vline(xintercept= as.numeric(finaldata_metro_all$Month.Code[c(10, 19, 46, 61)]),
+             linetype=2, colour="red", size = 0.75) +
+  theme_light() +
+  theme(legend.position = "bottom",
+        strip.text.x = element_text(size = 18, face = "bold"),
+        text = element_text(size = 15)) +
+  annotate("text", x = as.numeric(finaldata_metro_all$Month.Code[c(5)]), y = 100*12, label = "Initial Wave") +
+  annotate("text", x = as.numeric(finaldata_metro_all$Month.Code[c(16)])-.03, y = 100*12, label = "Second Wave") +
+  annotate("text", x = as.numeric(finaldata_metro_all$Month.Code[c(34)]), y = 100*12, label = "Alpha Wave") +
+  annotate("text", x = as.numeric(finaldata_metro_all$Month.Code[c(55)])-.03, y = 100*12, label = "Delta Wave") +
+  annotate("text", x = as.numeric(finaldata_metro_all$Month.Code[c(67)]), y = 100*12, label = "Omicron Wave")
+
+Figure2
+jpeg(file = "../Output/figure1.jpeg", width = 12, height =13, res = 300, units = 'in')
+Figure2
+dev.off()
+
+pdf(file = "../Output/figure1.pdf", width = 12, height = 13) 
+Figure2
+dev.off()
+```
+

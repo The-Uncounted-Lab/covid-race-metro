@@ -1,5 +1,5 @@
 ---
-title: "Table 2 Omicron Wave"
+title: "Appendix Table 3 Alpha Wave"
 author: "Ahyoung Cho & Rafeya Raquib"
 date: "Last updated on `r format(Sys.time(), '%d %B, %Y')`"
 output: html_document
@@ -36,7 +36,7 @@ clean_nh <- function(data) {
     filter(Single.Race.6 == "American Indian or Alaska Native" | Single.Race.6 == "Asian" | Single.Race.6 == "Black or African American" | Single.Race.6 == "White") %>%
     dplyr::rename(Race = Single.Race.6) %>%
     mutate(Wave = case_when(grepl("initial", FileName) ~ "Initial",
-                            grepl("omicron", FileName) ~ "Omicron"),
+                            grepl("alpha", FileName) ~ "Alpha"),
            Metro = case_when(grepl("large", FileName) ~ "Large Metro",
                              grepl("_medsmall", FileName) ~ "Medium/Small Metro",
                              grepl("_nonmetro", FileName) ~ "Nonmetro"),
@@ -55,7 +55,7 @@ clean_nh <- function(data) {
     dplyr::mutate(Deaths = as.integer(Deaths))
 }
 
-list_of_files <- list.files(path = "../Data/initial_omicron/nonhispanic/", recursive = TRUE,
+list_of_files <- list.files(path = "../Data/initial_alpha/nonhispanic/", recursive = TRUE,
                             pattern = ".txt", 
                             full.names = TRUE)
 
@@ -68,7 +68,7 @@ df_death_nh <- list_of_files %>%
 clean_hispanic <- function(data) {
   data %>%
     mutate(Wave = case_when(grepl("initial", FileName) ~ "Initial",
-                            grepl("omicron", FileName) ~ "Omicron"),
+                            grepl("alpha", FileName) ~ "Alpha"),
            Metro = case_when(grepl("large", FileName) ~ "Large Metro",
                              grepl("_medsmall", FileName) ~ "Medium/Small Metro",
                              grepl("_nonmetro", FileName) ~ "Nonmetro"),
@@ -84,7 +84,7 @@ clean_hispanic <- function(data) {
     dplyr::mutate(Deaths = as.integer(Deaths))
 }
 
-list_of_files <- list.files(path = "../Data/initial_omicron/hispanic/", recursive = TRUE,
+list_of_files <- list.files(path = "../Data/initial_alpha/hispanic/", recursive = TRUE,
                             pattern = ".txt", 
                             full.names = TRUE)
 
@@ -139,7 +139,7 @@ Reference: https://sphweb.bumc.bu.edu/otlt/MPH-Modules/EP/EP713_StandardizedRate
 ```{r, warning=FALSE, message = FALSE}
 initial_mortality_pop <- inner_join(df_death, pop_agegroup_metro, by = c("Metro", "Race", "AgeGroup","Wave")) %>% filter(Wave == "Initial")
 
-omicron_mortality_pop <- inner_join(df_death, pop_agegroup_metro, by = c("Metro", "Race", "AgeGroup","Wave")) %>% filter(Wave == "Omicron")
+alpha_mortality_pop <- inner_join(df_death, pop_agegroup_metro, by = c("Metro", "Race", "AgeGroup","Wave")) %>% filter(Wave == "Alpha")
 
 # Crude Death Rate 
 initial_cdr <-  initial_mortality_pop %>% 
@@ -148,18 +148,18 @@ initial_cdr <-  initial_mortality_pop %>%
   dplyr::mutate(initial_CDR = Deaths / Population_sum * 12 * 100000) %>% 
   dplyr::select(Metro, Race, initial_CDR) 
 
-omicron_cdr <-  omicron_mortality_pop %>% 
+alpha_cdr <-  alpha_mortality_pop %>% 
   dplyr::group_by(Metro, Race) %>%
   dplyr::summarize(Deaths=sum(Deaths),Population_sum=sum(Population)) %>%
-  dplyr::mutate(omicron_CDR = Deaths / Population_sum * 12 * 100000) %>% 
-  dplyr::select(Metro, Race, omicron_CDR) 
+  dplyr::mutate(alpha_CDR = Deaths / Population_sum * 12 * 100000) %>% 
+  dplyr::select(Metro, Race, alpha_CDR) 
 
 ## Race/Age Specific Death Rates
 initial_ar_deaths <-  initial_mortality_pop %>% 
   dplyr::group_by(Metro, Race) %>%
   dplyr::mutate(DR = Deaths / Population * 100000 * 12) 
 
-omicron_ar_deaths <-  omicron_mortality_pop %>% 
+alpha_ar_deaths <-  alpha_mortality_pop %>% 
   dplyr::group_by(Metro, Race) %>%
   dplyr::mutate(DR = Deaths / Population * 100000 * 12) 
 
@@ -172,18 +172,18 @@ initial_finaldata <- inner_join(initial_ar_deaths, age_distribution, by=c("AgeGr
                    initial_ASDR_var=sum(ProductVar)) 
 
 # Calculate age standardized death rate 
-omicron_finaldata <- inner_join(omicron_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
+alpha_finaldata <- inner_join(alpha_ar_deaths, age_distribution, by=c("AgeGroup")) %>% # merge with national age distribution
   dplyr::mutate(Product = DR * Distribution,
                 ProductVar=(Distribution**2)*(DR**2)*(1/Deaths))%>% # multiply CDR with age distribution 
   dplyr::group_by(Race, Metro) %>%
-  dplyr::summarise(omicron_ASDR = sum(Product),
-                   omicron_ASDR_var=sum(ProductVar)) 
+  dplyr::summarise(alpha_ASDR = sum(Product),
+                   alpha_ASDR_var=sum(ProductVar)) 
 
-df_list <- list(initial_cdr, initial_finaldata, omicron_cdr, omicron_finaldata)
+df_list <- list(initial_cdr, initial_finaldata, alpha_cdr, alpha_finaldata)
 
 finaldata_metro <- df_list %>% reduce(inner_join, by = c("Race", "Metro"))
 
-saveRDS(finaldata_metro, file = "../Data/finaldata/finaldata_metro_initial_omicron.rds")
+saveRDS(finaldata_metro, file = "../Data/finaldata/finaldata_metro_initial_alpha.rds")
 ```
 
 ```{r total}
@@ -199,105 +199,104 @@ initial_pop <-pop_agegroup_metro_total %>% filter(Wave=="Initial") %>%
   dplyr::select(Race,Metro,prop)%>%
   dplyr::rename(initial_prop=prop)
 
-omicron_pop <-pop_agegroup_metro_total %>% filter(Wave=="Omicron")%>%
+alpha_pop <-pop_agegroup_metro_total %>% filter(Wave=="Alpha")%>%
   dplyr::select(Race,Metro,prop)%>%
-  dplyr::rename(omicron_prop=prop)
+  dplyr::rename(alpha_prop=prop)
 
 ```
 
 ```{r, warning=FALSE, message = FALSE}
 join1 <- inner_join(finaldata_metro, initial_pop, by=c("Race","Metro")) 
 
-finaldata_metro_total <- inner_join(join1, omicron_pop, by=c("Race","Metro")) %>% # merge with national age distribution
+finaldata_metro_total <- inner_join(join1, alpha_pop, by=c("Race","Metro")) %>% # merge with national age distribution
   dplyr::mutate(initial_popadj = initial_ASDR*initial_prop,
                 initial_popadj_var=initial_ASDR_var*initial_prop**2,
-                omicron_popadj =  omicron_ASDR*omicron_prop,
-                omicron_popadj_var=omicron_ASDR_var*omicron_prop**2)%>% # multiply CDR with age distribution 
+                alpha_popadj =  alpha_ASDR*alpha_prop,
+                alpha_popadj_var=alpha_ASDR_var*alpha_prop**2)%>% # multiply CDR with age distribution 
   dplyr::group_by(Race) %>%
   dplyr::summarise(initial_ASDR = sum(initial_popadj),
                    initial_ASDR_var=sum(initial_popadj_var),
-                   omicron_ASDR = sum(omicron_popadj),
-                   omicron_ASDR_var=sum(omicron_popadj_var))%>%
+                   alpha_ASDR = sum(alpha_popadj),
+                   alpha_ASDR_var=sum(alpha_popadj_var))%>%
   dplyr::ungroup()%>%
   dplyr::mutate(Metro="Total")
 
 
-saveRDS(finaldata_metro_total, file = "../Data/finaldata/finaldata_metro_total_initial_omicron.rds")
+saveRDS(finaldata_metro_total, file = "../Data/finaldata/finaldata_metro_total_initial_alpha.rds")
 ```
 
-
-### Create Table 2
+### Create Table 3
 
 ```{r fig.asp = 0.8, fig.width = 10, include = FALSE, warning=FALSE, message = FALSE}
-finaldata_metro <- readRDS(file = "../Data/finaldata/finaldata_metro_initial_omicron.rds")
-finaldata_metro_total <- readRDS(file = "../Data/finaldata/finaldata_metro_total_initial_omicron.rds")
+finaldata_metro <- readRDS(file = "../Data/finaldata/finaldata_metro_initial_alpha.rds")
+finaldata_metro_total <- readRDS(file = "../Data/finaldata/finaldata_metro_total_initial_alpha.rds")
 finaldata_metro <- bind_rows(finaldata_metro, finaldata_metro_total)
 
 initial_rr_base <- finaldata_metro %>% filter(Race == "NH White") %>%
   dplyr::select(Metro, initial_ASDR, initial_ASDR_var) %>% dplyr::rename(initial_base = initial_ASDR,
                                                                initial_base_var=initial_ASDR_var) 
-omicron_rr_base <- finaldata_metro %>% filter(Race == "NH White") %>%
-  dplyr::select(Metro, omicron_ASDR, omicron_ASDR_var) %>% dplyr::rename(omicron_base = omicron_ASDR,
-                                                               omicron_base_var=omicron_ASDR_var)
+alpha_rr_base <- finaldata_metro %>% filter(Race == "NH White") %>%
+  dplyr::select(Metro, alpha_ASDR, alpha_ASDR_var) %>% dplyr::rename(alpha_base = alpha_ASDR,
+                                                               alpha_base_var=alpha_ASDR_var)
 
-rr_base <- inner_join(initial_rr_base, omicron_rr_base)
+rr_base <- inner_join(initial_rr_base, alpha_rr_base)
 finaldata_metro <- merge(finaldata_metro, rr_base, by = c("Metro"))
 
-Table2 <- finaldata_metro %>% 
+Table3 <- finaldata_metro %>% 
   mutate(Race = dplyr::recode(Race, 
                               "NH AIAN" = "Non-Hispanic AI/AN",
                               "NH Asian" = "Non-Hispanic Asian",
                               "NH Black" = "Non-Hispanic Black",
                               "NH White" = "Non-Hipanic White"),
-         pct_change_dr = (omicron_ASDR - initial_ASDR) / initial_ASDR*100,
-         pct_change_dr_upper=((omicron_ASDR-initial_ASDR)+1.96*sqrt(initial_ASDR_var+omicron_ASDR_var))/initial_ASDR*100,
-         pct_change_dr_lower=((omicron_ASDR-initial_ASDR)-1.96*sqrt(initial_ASDR_var+omicron_ASDR_var))/initial_ASDR*100,
+         pct_change_dr = (alpha_ASDR - initial_ASDR) / initial_ASDR*100,
+         pct_change_dr_upper=((alpha_ASDR-initial_ASDR)+1.96*sqrt(initial_ASDR_var+alpha_ASDR_var))/initial_ASDR*100,
+         pct_change_dr_lower=((alpha_ASDR-initial_ASDR)-1.96*sqrt(initial_ASDR_var+alpha_ASDR_var))/initial_ASDR*100,
          initial_rr = initial_ASDR / initial_base,
          initial_rr_var=(initial_rr**2)*(initial_ASDR_var/initial_ASDR**2+initial_base_var/initial_base**2),
          initial_rr_upper= initial_rr+1.96*sqrt(initial_rr_var),
          initial_rr_lower= initial_rr-1.96*sqrt(initial_rr_var),
-         omicron_rr = omicron_ASDR / omicron_base,
-         omicron_rr_var=(omicron_rr**2)*(omicron_ASDR_var/omicron_ASDR**2+omicron_base_var/omicron_base**2),
-         omicron_rr_upper= omicron_rr+1.96*sqrt(omicron_rr_var),
-         omicron_rr_lower= omicron_rr-1.96*sqrt(omicron_rr_var),
-         abs_change = omicron_ASDR - initial_ASDR, 
-         rel_change = omicron_ASDR / initial_ASDR,
-         pct_change_rr = (omicron_rr - initial_rr) / initial_rr*100,
-         pct_change_rr_var= (omicron_rr/initial_rr)**2*(omicron_rr_var/omicron_rr**2+initial_rr_var/initial_rr**2),
+         alpha_rr = alpha_ASDR / alpha_base,
+         alpha_rr_var=(alpha_rr**2)*(alpha_ASDR_var/alpha_ASDR**2+alpha_base_var/alpha_base**2),
+         alpha_rr_upper= alpha_rr+1.96*sqrt(alpha_rr_var),
+         alpha_rr_lower= alpha_rr-1.96*sqrt(alpha_rr_var),
+         abs_change = alpha_ASDR - initial_ASDR, 
+         rel_change = alpha_ASDR / initial_ASDR,
+         pct_change_rr = (alpha_rr - initial_rr) / initial_rr*100,
+         pct_change_rr_var= (alpha_rr/initial_rr)**2*(alpha_rr_var/alpha_rr**2+initial_rr_var/initial_rr**2),
          pct_change_rr_upper= pct_change_rr+1.96*sqrt(pct_change_rr_var)*100,
          pct_change_rr_lower= pct_change_rr-1.96*sqrt(pct_change_rr_var)*100
          ) %>%
-  dplyr::select(Metro, Race, initial_ASDR, omicron_ASDR, pct_change_dr,pct_change_dr_lower,pct_change_dr_upper,
+  dplyr::select(Metro, Race, initial_ASDR, alpha_ASDR, pct_change_dr,pct_change_dr_lower,pct_change_dr_upper,
                 initial_rr, initial_rr_lower,initial_rr_upper,
-                omicron_rr, omicron_rr_lower,omicron_rr_upper,
+                alpha_rr, alpha_rr_lower,alpha_rr_upper,
                 pct_change_rr,pct_change_rr_lower,pct_change_rr_upper)
-write.csv(Table2,"../Output/table2_omicron.csv")
+write.csv(Table3,"../Output/appendix_table3_alpha.csv")
 ```
 
 ```{r fig.asp = 0.8, fig.width = 10, warning=FALSE, message = FALSE}
-Table2_formatted <- Table2 %>%
+Table3_formatted <- Table3 %>%
   mutate(initial_ASDR = round(initial_ASDR, 1),
-         omicron_ASDR = round(omicron_ASDR, 1),
+         alpha_ASDR = round(alpha_ASDR, 1),
          pct_change_dr = round(pct_change_dr, 1),
          pct_change_dr_lower = round(pct_change_dr_lower, 1),
          pct_change_dr_upper = round(pct_change_dr_upper, 1),
          initial_rr = round(initial_rr, 1),
          initial_rr_lower = round(initial_rr_lower, 1),
          initial_rr_upper = round(initial_rr_upper, 1),
-         omicron_rr = round(omicron_rr, 1),
-         omicron_rr_lower = round(omicron_rr_lower, 1),
-         omicron_rr_upper = round(omicron_rr_upper, 1),
+         alpha_rr = round(alpha_rr, 1),
+         alpha_rr_lower = round(alpha_rr_lower, 1),
+         alpha_rr_upper = round(alpha_rr_upper, 1),
          pct_change_rr = round(pct_change_rr, 1),
          pct_change_rr_lower = round(pct_change_rr_lower, 1),
          pct_change_rr_upper = round(pct_change_rr_upper, 1)) %>%
   mutate(pct_change_dr_chr = paste(pct_change_dr, "(", pct_change_dr_lower, "to", pct_change_dr_upper, ")"),
          initial_rr_chr = paste(initial_rr, "(", initial_rr_lower, "to", initial_rr_upper, ")"),
-         omicron_rr_chr = paste(omicron_rr, "(", omicron_rr_lower, "to", omicron_rr_upper, ")"),
+         alpha_rr_chr = paste(alpha_rr, "(", alpha_rr_lower, "to", alpha_rr_upper, ")"),
          pct_change_rr_chr = paste(pct_change_rr, "(", pct_change_rr_lower, "to", pct_change_rr_upper, ")")) %>%
-  dplyr::select(Metro, Race, initial_ASDR, omicron_ASDR, pct_change_dr_chr, initial_rr_chr, omicron_rr_chr, pct_change_rr_chr) %>%
-  kbl(col.names = c("Metro", "Race", "ASDR (Initial)", "ASDR (Omicron)", "% Change Death Rates","Rate Ratio (Initial)", "Rate Ratio (Omicron)", "% Change Rate Ratio")) %>%
+  dplyr::select(Metro, Race, initial_ASDR, alpha_ASDR, pct_change_dr_chr, initial_rr_chr, alpha_rr_chr, pct_change_rr_chr) %>%
+  kbl(col.names = c("Metro", "Race", "ASDR (Initial)", "ASDR (Alpha)", "% Change Death Rates","Rate Ratio (Initial)", "Rate Ratio (Alpha)", "% Change Rate Ratio")) %>%
   kable_classic_2(full_width = F) %>%
-  save_kable("../Output/table2_omicron.html")
+  save_kable("../Output/appendix_table3_alpha.html")
 
 ```
 
